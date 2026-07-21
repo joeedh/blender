@@ -229,6 +229,11 @@ class VIEW3D_HT_tool_header(Header):
             layout.popover_group(context=".particlemode", **popover_kw)
         elif mode_string == 'OBJECT':
             layout.popover_group(context=".objectmode", **popover_kw)
+        elif mode_string == 'CUSTOM' and context.object is not None:
+            # Addon-registered mode: its context string is the registered
+            # idname (see #CTX_data_mode_string), so the mode's Tool-tab
+            # panels become header popovers like every built-in mode.
+            layout.popover_group(context=context.object.custom_mode, **popover_kw)
 
         if mode_string in {
             'EDIT_GREASE_PENCIL',
@@ -844,11 +849,25 @@ class VIEW3D_HT_header(Header):
         act_mode_item = bpy.types.Object.bl_rna.properties["mode"].enum_items[object_mode]
         act_mode_i18n_context = bpy.types.Object.bl_rna.properties["mode"].translation_context
 
+        mode_text = iface_(act_mode_item.name, act_mode_i18n_context)
+        mode_icon = act_mode_item.icon
+        if object_mode == 'CUSTOM' and obj is not None and obj.custom_mode:
+            # Addon-registered mode: the generic item only says "Custom",
+            # show the registered type's label and icon instead. The type is
+            # in the `bpy.types` namespace under the idname with dots
+            # replaced (see #rna_ObjectModeType_register).
+            mode_type = getattr(bpy.types, obj.custom_mode.replace(".", "_"), None)
+            if mode_type is not None:
+                mode_text = iface_(mode_type.bl_label)
+                mode_icon = getattr(mode_type, "bl_icon", '') or mode_icon
+            else:
+                mode_text = obj.custom_mode
+
         sub = row.row(align=True)
         sub.operator_menu_enum(
             "object.mode_set", "mode",
-            text=iface_(act_mode_item.name, act_mode_i18n_context),
-            icon=act_mode_item.icon,
+            text=mode_text,
+            icon=mode_icon,
         )
         del act_mode_item
 
@@ -1189,6 +1208,8 @@ class VIEW3D_MT_editor_menus(Menu):
         elif mode_string not in {
                 'SCULPT', 'SCULPT_CURVES', 'PAINT_GREASE_PENCIL', 'SCULPT_GREASE_PENCIL', 'WEIGHT_GREASE_PENCIL',
                 'VERTEX_GREASE_PENCIL',
+                # Addon-registered mode: no built-in select menu.
+                'CUSTOM',
         }:
             layout.menu("VIEW3D_MT_select_" + mode_string.lower())
 
@@ -1231,7 +1252,11 @@ class VIEW3D_MT_editor_menus(Menu):
                 layout.template_node_operator_asset_root_items()
 
         elif obj:
-            if mode_string not in {'PAINT_TEXTURE', 'SCULPT_CURVES', 'SCULPT_GREASE_PENCIL', 'VERTEX_GREASE_PENCIL'}:
+            if mode_string not in {
+                    'PAINT_TEXTURE', 'SCULPT_CURVES', 'SCULPT_GREASE_PENCIL', 'VERTEX_GREASE_PENCIL',
+                    # Addon-registered mode: no built-in menu.
+                    'CUSTOM',
+            }:
                 layout.menu("VIEW3D_MT_" + mode_string.lower())
             if mode_string == 'SCULPT':
                 layout.menu("VIEW3D_MT_mask")

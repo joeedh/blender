@@ -168,6 +168,14 @@ class BrushAssetShelf:
         if not mode:
             return None
 
+        ob = getattr(context, "object", None)
+        if ob is not None and ob.mode == 'CUSTOM' and ob.custom_mode:
+            # Addon-registered mode: its ObjectModeType can name the asset
+            # shelf that polls it (the built-in shelves poll built-in modes).
+            mode_type = getattr(bpy.types, ob.custom_mode.replace(".", "_"), None)
+            shelf_name = getattr(mode_type, "bl_brush_asset_shelf", "") if mode_type else ""
+            return shelf_name or None
+
         return mode_map[mode]
 
     @staticmethod
@@ -251,6 +259,18 @@ class UnifiedPaintPanel:
                         return mode
                     else:
                         return None
+                if mode == 'CUSTOM':
+                    # Addon-registered mode: a mode declaring
+                    # `bl_use_sculpt_paint` shares the sculpt Paint, so the
+                    # brush UI treats it as sculpt.
+                    import bpy
+                    ob = context.active_object
+                    mode_type = getattr(
+                        bpy.types, ob.custom_mode.replace(".", "_"), None,
+                    ) if (ob is not None and ob.custom_mode) else None
+                    if mode_type is not None and getattr(mode_type, "bl_use_sculpt_paint", False):
+                        return 'SCULPT'
+                    return None
                 return mode
         return None
 
@@ -948,6 +968,7 @@ def brush_settings(layout, context, brush, popover=False):
         # topology_rake_factor
         if (
                 capabilities.has_topology_rake and
+                context.sculpt_object is not None and
                 context.sculpt_object.use_dynamic_topology_sculpting
         ):
             layout.prop(brush, "topology_rake_factor", slider=True)

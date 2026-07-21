@@ -55,6 +55,9 @@ void ED_undosys_type_init()
   /* Text editor */
   BKE_UNDOSYS_TYPE_TEXT = BKE_undosys_type_append(ED_text_undosys_type);
 
+  /* Addon-registered custom object modes (opt-in delta undo). */
+  BKE_UNDOSYS_TYPE_CUSTOM_MODE = BKE_undosys_type_append(ed::ED_custom_mode_undosys_type);
+
   /* Keep global undo last (as a fallback). */
   BKE_UNDOSYS_TYPE_MEMFILE = BKE_undosys_type_append(ED_memfile_undosys_type);
 }

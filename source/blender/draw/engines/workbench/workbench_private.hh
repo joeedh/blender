@@ -215,6 +215,9 @@ struct ObjectState {
   bool draw_shadow = false;
   bool use_per_material_batches = false;
   bool sculpt_pbvh = false;
+  /* Draw from an addon custom mode's external draw provider (see
+   * BKE_object_draw_provider.hh) instead of the evaluated mesh. */
+  bool external_draw = false;
 
   ObjectState(const DRWContext *draw_ctx,
               const SceneState &scene_state,

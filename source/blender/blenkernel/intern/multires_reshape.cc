@@ -14,6 +14,7 @@
 #include "BKE_modifier.hh"
 #include "BKE_multires.hh"
 #include "BKE_object.hh"
+#include "BKE_paint.hh"
 
 #include "DEG_depsgraph_query.hh"
 
@@ -147,6 +148,142 @@ bool multiresModifier_reshapeFromCCG(const int tot_level, Mesh *coarse_mesh, Sub
   multires_reshape_object_grids_to_tangent_displacement(&reshape_context);
   multires_reshape_context_free(&reshape_context);
   return true;
+}
+
+/* Assign every top-level grid sample its absolute position straight from a flat
+ * per-grid array, mirroring assign_final_coords_from_ccg but sourcing a plain
+ * `grid[grid * grid_area + y * grid_size + x]` buffer instead of a SubdivCCG. */
+static bool multires_reshape_assign_final_coords_from_grid_array(
+    const MultiresReshapeContext *reshape_context, const Span<float3> grid_positions)
+{
+  const int grid_size = reshape_context->reshape.grid_size;
+  const int grid_area = grid_size * grid_size;
+  const float grid_size_1_inv = 1.0f / (float(grid_size) - 1.0f);
+  const int num_grids = reshape_context->num_grids;
+  if (grid_positions.size() != int64_t(num_grids) * grid_area) {
+    return false;
+  }
+  for (int grid_index = 0; grid_index < num_grids; ++grid_index) {
+    for (int y = 0; y < grid_size; ++y) {
+      const float v = float(y) * grid_size_1_inv;
+      for (int x = 0; x < grid_size; ++x) {
+        const float u = float(x) * grid_size_1_inv;
+        GridCoord grid_coord;
+        grid_coord.grid_index = grid_index;
+        grid_coord.u = u;
+        grid_coord.v = v;
+        ReshapeGridElement grid_element = multires_reshape_grid_element_for_grid_coord(
+            reshape_context, &grid_coord);
+        BLI_assert(grid_element.displacement != nullptr);
+        *grid_element.displacement =
+            grid_positions[int64_t(grid_index) * grid_area + int64_t(y) * grid_size + x];
+      }
+    }
+  }
+  return true;
+}
+
+bool multiresModifier_reshapeFromPositions(Depsgraph *depsgraph,
+                                           MultiresModifierData *mmd,
+                                           Object *object,
+                                           const Span<float3> grid_positions)
+{
+  /* Reshape the full stack: force the reshape level to the top so the grids are
+   * assigned and baked at `totlvl` resolution. */
+  MultiresModifierData highest_mmd = dna::shallow_copy(*mmd);
+  highest_mmd.sculptlvl = highest_mmd.totlvl;
+  highest_mmd.lvl = highest_mmd.totlvl;
+  highest_mmd.renderlvl = highest_mmd.totlvl;
+
+  MultiresReshapeContext reshape_context;
+  if (!multires_reshape_context_create_from_object(
+          &reshape_context, depsgraph, object, &highest_mmd))
+  {
+    return false;
+  }
+  multires_reshape_store_original_grids(&reshape_context);
+  multires_reshape_ensure_grids(id_cast<Mesh *>(object->data), reshape_context.top.level);
+  if (!multires_reshape_assign_final_coords_from_grid_array(&reshape_context, grid_positions)) {
+    multires_reshape_context_free(&reshape_context);
+    return false;
+  }
+  multires_reshape_smooth_object_grids_with_details(&reshape_context);
+  multires_reshape_object_grids_to_tangent_displacement(&reshape_context);
+  multires_reshape_context_free(&reshape_context);
+  return true;
+}
+
+bool multiresModifier_maskFromVertValues(Depsgraph *depsgraph,
+                                         Main *bmain,
+                                         MultiresModifierData *mmd,
+                                         Object *object,
+                                         const Span<float> values)
+{
+  /* Consume the values at `totlvl` resolution, like the vertcos reshape. The
+   * mask layer is created at the top level when missing; masks are absolute
+   * scalars, so the assignment is the whole transfer (no smooth/bake pass). */
+  MultiresModifierData highest_mmd = dna::shallow_copy(*mmd);
+  highest_mmd.sculptlvl = highest_mmd.totlvl;
+  highest_mmd.lvl = highest_mmd.totlvl;
+  highest_mmd.renderlvl = highest_mmd.totlvl;
+
+  BKE_sculpt_mask_layers_ensure(depsgraph, bmain, object, &highest_mmd);
+
+  MultiresReshapeContext reshape_context;
+  if (!multires_reshape_context_create_from_object(
+          &reshape_context, depsgraph, object, &highest_mmd))
+  {
+    return false;
+  }
+  /* An existing layer may hold coarser grids; resize them to the top level
+   * (they are fully overwritten by the assignment below). */
+  multires_reshape_ensure_grids(id_cast<Mesh *>(object->data), reshape_context.top.level);
+  const bool ok = multires_reshape_assign_mask_from_vert_values(&reshape_context, values);
+  multires_reshape_context_free(&reshape_context);
+  return ok;
+}
+
+float *multiresModifier_maskToVertValues(Depsgraph *depsgraph,
+                                         MultiresModifierData *mmd,
+                                         Object *object,
+                                         int *r_values_num,
+                                         bool *r_has_mask)
+{
+  MultiresModifierData highest_mmd = dna::shallow_copy(*mmd);
+  highest_mmd.sculptlvl = highest_mmd.totlvl;
+  highest_mmd.lvl = highest_mmd.totlvl;
+  highest_mmd.renderlvl = highest_mmd.totlvl;
+
+  *r_values_num = 0;
+  MultiresReshapeContext reshape_context;
+  if (!multires_reshape_context_create_from_object(
+          &reshape_context, depsgraph, object, &highest_mmd))
+  {
+    *r_has_mask = false;
+    return nullptr;
+  }
+  *r_has_mask = reshape_context.grid_paint_masks != nullptr;
+  float *values = multires_reshape_read_mask_to_vert_values(&reshape_context, r_values_num);
+  multires_reshape_context_free(&reshape_context);
+  return values;
+}
+
+bool multiresModifier_reshapeFromVertPositions(Depsgraph *depsgraph,
+                                               MultiresModifierData *mmd,
+                                               Object *object,
+                                               const Span<float3> positions)
+{
+  /* Reshape the whole stack: force the reshape level to the top so `positions`
+   * is consumed at `totlvl` subdivided-mesh resolution ((2^totlvl)+1 per base
+   * edge, subdiv-vertex order — the layout src_mesh_eval->vert_positions() and
+   * BKE_multires_create_mesh produce). Each shared vertex appears once; the
+   * reshape scatters it to every grid replica, so there is no seam-ordering
+   * hazard (unlike a per-grid feed). */
+  MultiresModifierData highest_mmd = dna::shallow_copy(*mmd);
+  highest_mmd.sculptlvl = highest_mmd.totlvl;
+  highest_mmd.lvl = highest_mmd.totlvl;
+  highest_mmd.renderlvl = highest_mmd.totlvl;
+  return multiresModifier_reshapeFromVertcos(depsgraph, object, &highest_mmd, positions);
 }
 
 /** \} */

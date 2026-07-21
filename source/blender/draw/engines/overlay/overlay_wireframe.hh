@@ -13,6 +13,8 @@
 
 #include "DRW_render.hh"
 #include "draw_common.hh"
+#include "BKE_object_draw_provider.hh"
+
 #include "draw_sculpt.hh"
 
 #include "overlay_base.hh"
@@ -185,6 +187,10 @@ class Wireframe : Overlay {
             for (SculptBatch &batch : sculpt_batches_get(ob_ref.object, SCULPT_BATCH_WIREFRAME)) {
               coloring.mesh_all_edges_ps_->draw(batch.batch, handle);
             }
+          }
+          else if (BKE_object_use_external_draw(ob_ref.object, state.rv3d)) {
+            /* External draw provides no wireframe batch yet (v1 deferral); skip
+             * so the evaluated mesh's edges (not the drawn geometry) are hidden. */
           }
           else if (!in_edit_mode || bypass_mode_check) {
             /* Only draw the wireframe in edit mode if object has edit cage.

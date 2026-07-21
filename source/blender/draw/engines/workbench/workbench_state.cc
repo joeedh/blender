@@ -11,6 +11,7 @@
 #include "BKE_editmesh.hh"
 #include "BKE_mesh.hh"
 #include "BKE_mesh_types.hh"
+#include "BKE_object_draw_provider.hh"
 #include "BKE_paint.hh"
 #include "BKE_paint_bvh.hh"
 
@@ -305,6 +306,8 @@ ObjectState::ObjectState(const DRWContext *draw_ctx,
 
   sculpt_pbvh = BKE_sculptsession_use_pbvh_draw(ob, draw_ctx->rv3d) &&
                 !draw_ctx->is_image_render();
+  external_draw = BKE_object_use_external_draw(ob, draw_ctx->rv3d) &&
+                  !draw_ctx->is_image_render();
   draw_shadow = scene_state.draw_shadows && (ob->dtx & OB_DRAW_NO_SHADOW_CAST) == 0 &&
                 !sculpt_pbvh && !(is_active && DRW_object_use_hide_faces(ob));
 

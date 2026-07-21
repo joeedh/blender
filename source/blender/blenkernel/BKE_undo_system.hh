@@ -226,6 +226,7 @@ enum eUndoTypeFlags {
  * Expose since we need to perform operations on specific undo types (rarely).
  * \{ */
 
+extern const UndoType *BKE_UNDOSYS_TYPE_CUSTOM_MODE;
 extern const UndoType *BKE_UNDOSYS_TYPE_IMAGE;
 extern const UndoType *BKE_UNDOSYS_TYPE_MEMFILE;
 extern const UndoType *BKE_UNDOSYS_TYPE_PAINTCURVE;

@@ -25,6 +25,7 @@
 #include "BKE_material.hh"
 #include "BKE_multires.hh"
 #include "BKE_object.hh"
+#include "BKE_object_modes.hh"
 #include "BKE_object_types.hh"
 #include "BKE_packedFile.hh"
 #include "BKE_paint.hh"
@@ -303,6 +304,17 @@ bool ED_editors_flush_edits_for_object_ex(Main *bmain, Object *ob, bool check_ne
     /* get editmode results */
     has_edited = true;
     object::editmode_load(bmain, ob);
+  }
+  else if (ob->mode & OB_MODE_CUSTOM) {
+    ObjectModeType *mt = BKE_object_mode_type_find(ob->custom_mode_id);
+    if (mt && mt->flush) {
+      /* The addon's promise that everything worth keeping is in the data ID
+       * — runs before memfile undo encode, save and render. Dirty tracking
+       * is the addon's job (a clean session returns immediately); there is
+       * no C-side per-object mode runtime to hang a flag on yet. */
+      mt->flush(mt, ob);
+      has_edited = true;
+    }
   }
   return has_edited;
 }

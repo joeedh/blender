@@ -9,7 +9,10 @@
 #pragma once
 
 #include "BKE_modifier.hh"
+#include "BKE_object_draw_provider.hh"
 #include "BKE_paint.hh"
+
+#include "draw_external.hh"
 
 #include "overlay_armature.hh"
 #include "overlay_base.hh"
@@ -100,6 +103,14 @@ class Fade : Overlay {
             ResourceHandleRange handle = manager.unique_handle_for_sculpt(ob_ref);
 
             for (SculptBatch &batch : sculpt_batches_get(ob_ref.object, SCULPT_BATCH_DEFAULT)) {
+              sub.draw(batch.batch, handle);
+            }
+          }
+          else if (BKE_object_use_external_draw(ob_ref.object, state.rv3d) &&
+                   !state.is_image_render)
+          {
+            ResourceHandleRange handle = manager.unique_handle(ob_ref);
+            for (SculptBatch &batch : external_batches_get(ob_ref.object, SCULPT_BATCH_DEFAULT)) {
               sub.draw(batch.batch, handle);
             }
           }

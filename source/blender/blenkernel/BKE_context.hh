@@ -157,8 +157,11 @@ enum eContextObjectMode {
   CTX_MODE_SCULPT_GREASE_PENCIL,
   CTX_MODE_WEIGHT_GREASE_PENCIL,
   CTX_MODE_VERTEX_GREASE_PENCIL,
+  /** Addon-registered mode (#OB_MODE_CUSTOM); #CTX_data_mode_string returns
+   * the registered idname rather than the generic slot string. */
+  CTX_MODE_CUSTOM,
 };
-#define CTX_MODE_NUM (CTX_MODE_VERTEX_GREASE_PENCIL + 1)
+#define CTX_MODE_NUM (CTX_MODE_CUSTOM + 1)
 
 /* Context */
 

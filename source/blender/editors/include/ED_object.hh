@@ -32,6 +32,7 @@ struct GpencilModifierData;
 struct Main;
 struct ModifierData;
 struct Object;
+struct ObjectModeType;
 struct PointerRNA;
 struct ReportList;
 struct Scene;
@@ -450,6 +451,17 @@ bool mode_set(bContext *C, eObjectMode mode);
 
 void mode_generic_exit(Main *bmain, Depsgraph *depsgraph, Scene *scene, Object *ob);
 bool mode_generic_has_data(Depsgraph *depsgraph, const Object *ob);
+
+/**
+ * Park/read the custom mode a pending #OBJECT_OT_mode_set targets (the mode
+ * enum value cannot carry the idname through the generic switch machinery).
+ * Set before dispatching, cleared (set to null) when the switch ends.
+ */
+void custom_mode_pending_set(ObjectModeType *mt);
+ObjectModeType *custom_mode_pending_get();
+
+/** Force-exit every object in custom mode `mt` (mode type unregistration). */
+void custom_mode_exit_all(Main *bmain, ObjectModeType *mt);
 
 void posemode_set_for_weight_paint(bContext *C, Main *bmain, Object *ob, bool is_mode_set);
 

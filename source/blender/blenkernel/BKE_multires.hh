@@ -15,6 +15,7 @@
 namespace blender {
 
 struct Depsgraph;
+struct Main;
 struct MDisps;
 struct Mesh;
 struct ModifierData;
@@ -175,6 +176,58 @@ bool multiresModifier_reshapeFromDeformModifier(Depsgraph *depsgraph,
                                                 MultiresModifierData *mmd,
                                                 ModifierData *deform_md);
 bool multiresModifier_reshapeFromCCG(int tot_level, Mesh *coarse_mesh, SubdivCCG *subdiv_ccg);
+/**
+ * Reshape `object`'s multires to a top-level surface given as absolute
+ * object-space positions in per-grid, row-major order:
+ * `grid_positions[grid * grid_area + y * grid_size + x]`, `grid_size` at
+ * `mmd->totlvl` and `grid_area = grid_size * grid_size`, grids in loop order
+ * (matching `CD_MDISPS`). Boundary/seam samples are replicated per grid and
+ * must carry equal values. Bakes into `CD_MDISPS` as tangent displacement.
+ * Returns false on a grid-sample-count mismatch.
+ */
+bool multiresModifier_reshapeFromPositions(Depsgraph *depsgraph,
+                                           MultiresModifierData *mmd,
+                                           Object *object,
+                                           Span<float3> grid_positions);
+/**
+ * Reshape `object`'s multires to a top-level surface given as absolute
+ * object-space positions in subdivided-mesh vertex order (the layout of the
+ * evaluated multires mesh at `mmd->totlvl`, `BKE_multires_create_mesh` /
+ * `Mesh::vert_positions()`): one position per subdivided vertex, shared
+ * boundary vertices present once. Bakes into `CD_MDISPS`. Returns false on a
+ * vertex-count mismatch. Prefer this over the per-grid variant — it carries no
+ * seam-replica ordering hazard.
+ */
+bool multiresModifier_reshapeFromVertPositions(Depsgraph *depsgraph,
+                                               MultiresModifierData *mmd,
+                                               Object *object,
+                                               Span<float3> positions);
+
+/**
+ * Write `object`'s multires paint mask (#CD_GRID_PAINT_MASK, created when
+ * missing) from top-level values in subdivided-mesh vertex order (the same
+ * layout as #multiresModifier_reshapeFromVertPositions). Masks are absolute
+ * scalars — a direct assignment, no displacement smoothing. Returns false on
+ * a vertex-count mismatch.
+ */
+bool multiresModifier_maskFromVertValues(Depsgraph *depsgraph,
+                                         Main *bmain,
+                                         MultiresModifierData *mmd,
+                                         Object *object,
+                                         Span<float> values);
+
+/**
+ * Read `object`'s multires paint mask into top-level per-subdivided-vertex
+ * values (the read twin of #multiresModifier_maskFromVertValues; grids are
+ * sampled at their own stored level). Returns a MEM-allocated array of
+ * `*r_values_num` floats (all zero when no mask layer exists � reported via
+ * `r_has_mask`); null on failure. Caller frees.
+ */
+float *multiresModifier_maskToVertValues(Depsgraph *depsgraph,
+                                         MultiresModifierData *mmd,
+                                         Object *object,
+                                         int *r_values_num,
+                                         bool *r_has_mask);
 
 /* Subdivide multi-res displacement once. */
 

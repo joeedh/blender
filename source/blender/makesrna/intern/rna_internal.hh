@@ -197,6 +197,7 @@ void RNA_def_object_force(BlenderRNA *brna);
 void RNA_def_packedfile(BlenderRNA *brna);
 void RNA_def_palette(BlenderRNA *brna);
 void RNA_def_particle(BlenderRNA *brna);
+void RNA_def_object_mode(BlenderRNA *brna);
 void RNA_def_pointcloud(BlenderRNA *brna);
 void RNA_def_pose(BlenderRNA *brna);
 void RNA_def_profile(BlenderRNA *brna);

@@ -12,6 +12,9 @@
 
 #include "DNA_particle_types.h"
 
+#include "BKE_object_draw_provider.hh"
+
+#include "draw_external.hh"
 #include "draw_sculpt.hh"
 
 #include "overlay_base.hh"
@@ -195,6 +198,21 @@ class Prepass : Overlay {
     }
   }
 
+  void external_sync(Manager &manager, const ObjectRef &ob_ref, Resources &res)
+  {
+    ResourceHandleRange handle = manager.unique_handle(ob_ref);
+
+    for (SculptBatch &batch : external_batches_get(ob_ref.object, SCULPT_BATCH_DEFAULT)) {
+      select::ID select_id = res.select_id(ob_ref);
+      if (res.is_selection()) {
+        mesh_ps_->draw_expand(batch.batch, GPU_PRIM_TRIS, 1, 1, handle, select_id.get());
+      }
+      else {
+        mesh_ps_->draw(batch.batch, handle, select_id.get());
+      }
+    }
+  }
+
   void object_sync(Manager &manager,
                    const ObjectRef &ob_ref,
                    Resources &res,
@@ -215,6 +233,11 @@ class Prepass : Overlay {
 
     if (use_sculpt_pbvh) {
       sculpt_sync(manager, ob_ref, res);
+      return;
+    }
+
+    if (BKE_object_use_external_draw(ob_ref.object, state.rv3d) && !state.is_image_render) {
+      external_sync(manager, ob_ref, res);
       return;
     }
 

@@ -32,6 +32,7 @@
 
 #include "draw_cache.hh"
 #include "draw_common.hh"
+#include "draw_external.hh"
 #include "draw_sculpt.hh"
 #include "draw_view_data.hh"
 
@@ -190,8 +191,12 @@ class Instance : public DrawEngine {
     ResourceHandleRange emitter_handle = {};
 
     if (is_object_data_visible) {
-      if (object_state.sculpt_pbvh) {
-        ResourceHandleRange handle = manager.unique_handle_for_sculpt(ob_ref);
+      if (object_state.sculpt_pbvh || object_state.external_draw) {
+        /* Sculpt derives the handle bounds from its PBVH tree; a custom mode has
+         * none, so external-draw objects take the regular object-bounds handle. */
+        ResourceHandleRange handle = object_state.sculpt_pbvh ?
+                                         manager.unique_handle_for_sculpt(ob_ref) :
+                                         manager.unique_handle(ob_ref);
         this->sculpt_sync(manager, ob_ref, handle, object_state);
         emitter_handle = handle;
       }
@@ -362,8 +367,14 @@ class Instance : public DrawEngine {
       features = SCULPT_BATCH_UV;
     }
 
+    /* Custom modes provide their geometry through the external draw provider;
+     * everything downstream consumes the same per-node SculptBatch list. */
+    Vector<SculptBatch> batches = object_state.external_draw ?
+                                      external_batches_get(ob_ref.object, features) :
+                                      sculpt_batches_get(ob_ref.object, features);
+
     if (object_state.use_per_material_batches) {
-      for (SculptBatch &batch : sculpt_batches_get(ob_ref.object, features)) {
+      for (SculptBatch &batch : batches) {
         Material mat = this->get_material(ob_ref, object_state.color_type, batch.material_slot);
         if (scene_state_.show_paint_bvh_debug) {
           mat.base_color = batch.debug_color();
@@ -380,7 +391,7 @@ class Instance : public DrawEngine {
     }
     else {
       Material mat = this->get_material(ob_ref, object_state.color_type);
-      for (SculptBatch &batch : sculpt_batches_get(ob_ref.object, features)) {
+      for (SculptBatch &batch : batches) {
         if (scene_state_.show_paint_bvh_debug) {
           mat.base_color = batch.debug_color();
         }

@@ -11,7 +11,10 @@
 #include "overlay_base.hh"
 #include "overlay_grease_pencil.hh"
 
+#include "BKE_object_draw_provider.hh"
+
 #include "draw_common.hh"
+#include "draw_external.hh"
 
 #include "DNA_userdef_types.h"
 
@@ -154,7 +157,14 @@ class Outline : Overlay {
             res, *prepass_gpencil_ps_, state.scene, ob_ref.object, manager.unique_handle(ob_ref));
         break;
       case OB_MESH:
-        if (state.xray_enabled_and_not_wire) {
+        if (BKE_object_use_external_draw(ob_ref.object, state.rv3d) && !state.is_image_render) {
+          /* Outline the provider geometry, not the evaluated mesh. */
+          ResourceHandleRange handle = manager.unique_handle(ob_ref);
+          for (SculptBatch &batch : external_batches_get(ob_ref.object, SCULPT_BATCH_DEFAULT)) {
+            prepass_mesh_ps_->draw(batch.batch, handle);
+          }
+        }
+        else if (state.xray_enabled_and_not_wire) {
           geom = DRW_cache_mesh_edge_detection_get(ob_ref.object, nullptr);
           prepass_wire_ps_->draw_expand(geom, GPU_PRIM_LINES, 1, 1, manager.unique_handle(ob_ref));
         }

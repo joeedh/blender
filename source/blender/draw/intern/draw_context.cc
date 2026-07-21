@@ -46,6 +46,7 @@
 #include "BKE_modifier.hh"
 #include "BKE_object.hh"
 #include "BKE_object_types.hh"
+#include "BKE_object_draw_provider.hh"
 #include "BKE_paint.hh"
 #include "BKE_particle.h"
 #include "BKE_pointcache.h"
@@ -86,6 +87,7 @@
 #include "draw_color_management.hh"
 #include "draw_common_c.hh"
 #include "draw_context_private.hh"
+#include "draw_external.hh"
 #include "draw_handle.hh"
 #include "draw_manager_text.hh"
 #include "draw_shader.hh"
@@ -683,6 +685,12 @@ static bool supports_handle_ranges(DupliObject *dupli, Object *parent, const DRW
   }
 
   if (BKE_sculptsession_use_pbvh_draw(ob, draw_ctx.rv3d)) {
+    return false;
+  }
+
+  /* Custom modes draw per-node through the external draw provider, like sculpt;
+   * keep them off the instanced handle-range fast path. */
+  if (BKE_object_use_external_draw(ob, draw_ctx.rv3d)) {
     return false;
   }
 
@@ -2452,6 +2460,13 @@ void DRW_module_exit()
 {
   GPU_TEXTURE_FREE_SAFE(g_select_buffer.texture_depth);
   GPU_FRAMEBUFFER_FREE_SAFE(g_select_buffer.framebuffer_depth_only);
+
+  /* Release the external-draw per-object GPU caches while a GPU context is
+   * still bound. Their vertex buffers must be freed before the backend shuts
+   * down: the function-local static Map that owns them would otherwise run its
+   * destructor at C-runtime atexit, after the GPU backend is gone, and freeing
+   * a buffer then locks an already-destroyed backend resource pool. */
+  draw::external_draw_cache_free_all();
 
   DRW_shaders_free();
 }

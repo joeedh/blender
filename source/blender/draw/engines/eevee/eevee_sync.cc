@@ -8,6 +8,7 @@
  * Converts the different renderable object types to draw-calls.
  */
 
+#include "BKE_object_draw_provider.hh"
 #include "BKE_paint.hh"
 #include "BKE_paint_bvh.hh"
 #include "DNA_curves_types.h"
@@ -18,6 +19,7 @@
 
 #include "draw_cache.hh"
 #include "draw_common.hh"
+#include "draw_external.hh"
 #include "draw_sculpt.hh"
 
 #include "eevee_instance.hh"
@@ -273,22 +275,28 @@ bool SyncModule::sync_sculpt(const ObjectRef &ob_ref)
     return false;
   }
 
-  bool pbvh_draw = BKE_sculptsession_use_pbvh_draw(ob_ref.object, inst_.rv3d) &&
-                   !inst_.is_image_render;
-  if (!pbvh_draw) {
+  const bool pbvh_draw = BKE_sculptsession_use_pbvh_draw(ob_ref.object, inst_.rv3d) &&
+                         !inst_.is_image_render;
+  const bool external_draw = BKE_object_use_external_draw(ob_ref.object, inst_.rv3d) &&
+                             !inst_.is_image_render;
+  if (!pbvh_draw && !external_draw) {
     return false;
   }
 
-  ObjectHandle ob_handle = sync_object(ob_ref, inst_.manager->unique_handle_for_sculpt(ob_ref));
+  /* A custom mode has no PBVH tree, so its handle comes from the object bounds. */
+  ResourceHandleRange handle = pbvh_draw ? inst_.manager->unique_handle_for_sculpt(ob_ref) :
+                                           inst_.manager->unique_handle(ob_ref);
+  ObjectHandle ob_handle = sync_object(ob_ref, handle);
 
   bool has_motion = false;
   MaterialArray &material_array = inst_.materials.material_array_get(ob_handle, has_motion);
 
   Vector<Material *, 8> synced_materials;
 
-  for (SculptBatch &batch :
-       sculpt_batches_per_material_get(ob_ref.object, material_array.gpu_materials))
-  {
+  const Vector<SculptBatch> batches =
+      pbvh_draw ? sculpt_batches_per_material_get(ob_ref.object, material_array.gpu_materials) :
+                  external_batches_per_material_get(ob_ref.object, material_array.gpu_materials);
+  for (const SculptBatch &batch : batches) {
     gpu::Batch *geom = batch.batch;
     if (geom == nullptr) {
       continue;

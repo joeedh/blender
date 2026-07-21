@@ -9667,10 +9667,21 @@ static int rna_function_register_arg_count(FunctionRNA *func, int *min_count)
  * Mainly helpers for `register_class` & `unregister_class`.
  * \{ */
 
-static int bpy_class_validate_recursive(PointerRNA *dummy_ptr,
-                                        StructRNA *srna,
-                                        void *py_data,
-                                        bool *have_function)
+/* CLAUDENOTE: dev-only ASAN workaround (revert before the PR). This reads
+ * PyObject fields (e.g. `PyCodeObject::co_argcount`) whose backing memory the
+ * ASAN-instrumented bundled CPython poisons in its own obmalloc pools; the
+ * reads are valid but ASAN reports use-after-poison on every class
+ * registration. MSVC's ASAN has no file-based ignorelist (unlike clang's
+ * `-fsanitize-ignorelist`), so exclude just this function via the attribute.
+ * User-poisoning stays enabled everywhere else. */
+#if defined(__SANITIZE_ADDRESS__) && defined(_MSC_VER) && !defined(__clang__)
+__declspec(no_sanitize_address)
+#endif
+static int
+bpy_class_validate_recursive(PointerRNA *dummy_ptr,
+                             StructRNA *srna,
+                             void *py_data,
+                             bool *have_function)
 {
   const char *class_type = RNA_struct_identifier(srna);
   StructRNA *srna_base = RNA_struct_base(srna);
@@ -9905,7 +9916,15 @@ static int bpy_class_validate(PointerRNA *dummy_ptr, void *py_data, bool *have_f
 }
 
 /* TODO: multiple return values like with RNA functions. */
-static int bpy_class_call(bContext *C, PointerRNA *ptr, FunctionRNA *func, ParameterList *parms)
+/* CLAUDENOTE: dev-only ASAN workaround (revert before the PR). Same
+ * use-after-poison false positive as #bpy_class_validate_recursive above:
+ * `PyCodeObject::co_argcount` reads land in CPython's user-poisoned obmalloc
+ * pools; MSVC ASAN has no ignorelist, so exclude just this function. */
+#if defined(__SANITIZE_ADDRESS__) && defined(_MSC_VER) && !defined(__clang__)
+__declspec(no_sanitize_address)
+#endif
+static int
+bpy_class_call(bContext *C, PointerRNA *ptr, FunctionRNA *func, ParameterList *parms)
 {
   PyObject *args;
   PyObject *ret = nullptr, *py_srna = nullptr, *py_class_instance = nullptr, *parmitem;

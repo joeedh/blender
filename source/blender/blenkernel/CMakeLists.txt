@@ -238,6 +238,7 @@ set(SRC
   intern/object.cc
   intern/object_deform.cc
   intern/object_dupli.cc
+  intern/object_modes_custom.cc
   intern/object_update.cc
   intern/ocean.cc
   intern/ocean_spectrum.cc
@@ -490,6 +491,8 @@ set(SRC
   BKE_node_tree_zones.hh
   BKE_object.hh
   BKE_object_deform.h
+  BKE_object_draw_provider.hh
+  BKE_object_modes.hh
   BKE_object_types.hh
   BKE_ocean.h
   BKE_outliner_treehash.hh

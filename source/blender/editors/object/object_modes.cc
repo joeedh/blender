@@ -13,6 +13,7 @@
 #include "DNA_object_types.h"
 #include "DNA_scene_types.h"
 
+#include "BLI_listbase_iterator.hh"
 #include "BLI_time.hh"
 #include "BLI_utildefines.hh"
 
@@ -21,8 +22,10 @@
 #include "BKE_layer.hh"
 #include "BKE_lib_id.hh"
 #include "BKE_library.hh"
+#include "BKE_main.hh"
 #include "BKE_modifier.hh"
 #include "BKE_object.hh"
+#include "BKE_object_modes.hh"
 #include "BKE_paint.hh"
 #include "BKE_paint_types.hh"
 #include "BKE_report.hh"
@@ -54,6 +57,55 @@
 #include "object_intern.hh"
 
 namespace blender::ed::object {
+
+/* -------------------------------------------------------------------- */
+/** \name Custom (Addon-Registered) Mode Support
+ * \{ */
+
+/**
+ * The custom mode a pending #OBJECT_OT_mode_set is targeting. The mode enum
+ * value alone cannot carry the idname through the generic mode-switch
+ * machinery (#mode_set_ex re-dispatches through operators), so the decoded
+ * target is parked here between the `mode_set` exec and the
+ * #OBJECT_OT_custom_mode_toggle it dispatches; cleared when `mode_set` ends.
+ */
+static ObjectModeType *custom_mode_pending = nullptr;
+
+void custom_mode_pending_set(ObjectModeType *mt)
+{
+  custom_mode_pending = mt;
+}
+
+ObjectModeType *custom_mode_pending_get()
+{
+  return custom_mode_pending;
+}
+
+/** The type the object would enter/is in: the pending target if set, else
+ * the object's own idname. */
+static ObjectModeType *custom_mode_type_from_object(const Object *ob)
+{
+  if (custom_mode_pending) {
+    return custom_mode_pending;
+  }
+  return BKE_object_mode_type_find(ob->custom_mode_id);
+}
+
+void custom_mode_exit_all(Main *bmain, ObjectModeType *mt)
+{
+  for (Object &ob : bmain->objects) {
+    if ((ob.mode & OB_MODE_CUSTOM) && STREQ(ob.custom_mode_id, mt->idname)) {
+      if (mt->exit) {
+        mt->exit(mt, nullptr, &ob);
+      }
+      ob.restore_mode = ob.mode;
+      ob.mode &= ~OB_MODE_CUSTOM;
+      DEG_id_tag_update_ex(bmain, &ob.id, ID_RECALC_SYNC_TO_EVAL);
+    }
+  }
+}
+
+/** \} */
 
 /* -------------------------------------------------------------------- */
 /** \name High Level Mode Operations
@@ -97,6 +149,9 @@ static const char *object_mode_op_string(eObjectMode mode)
   if (mode == OB_MODE_SCULPT_CURVES) {
     return "CURVES_OT_sculptmode_toggle";
   }
+  if (mode & OB_MODE_CUSTOM) {
+    return "OBJECT_OT_custom_mode_toggle";
+  }
   return nullptr;
 }
 
@@ -104,6 +159,11 @@ bool mode_compat_test(const Object *ob, eObjectMode mode)
 {
   if (mode == OB_MODE_OBJECT) {
     return true;
+  }
+
+  if (mode & OB_MODE_CUSTOM) {
+    const ObjectModeType *mt = custom_mode_type_from_object(ob);
+    return (mt != nullptr) && BKE_object_mode_type_poll_object(mt, ob);
   }
 
   switch (ob->type) {
@@ -329,6 +389,22 @@ static bool ed_object_mode_generic_exit_ex(
       return true;
     }
     ED_object_particle_edit_mode_exit_ex(scene, ob);
+  }
+  else if (ob->mode & OB_MODE_CUSTOM) {
+    ObjectModeType *mt = BKE_object_mode_type_find(ob->custom_mode_id);
+    if (only_test) {
+      return mt != nullptr;
+    }
+    if (mt && mt->exit) {
+      /* No context on this path (workspace/object switches, file close). */
+      mt->exit(mt, nullptr, ob);
+    }
+    /* `custom_mode_id` is kept: it doubles as the restore target for
+     * re-entering the mode (and survives an unregistered idname, which is
+     * sanitized at file load instead). */
+    ob->restore_mode = ob->mode;
+    ob->mode &= ~OB_MODE_CUSTOM;
+    DEG_id_tag_update_ex(bmain, &ob->id, ID_RECALC_SYNC_TO_EVAL);
   }
   else if (ob->type == OB_GREASE_PENCIL) {
     BLI_assert((ob->mode & OB_MODE_OBJECT) == 0);

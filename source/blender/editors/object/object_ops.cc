@@ -40,6 +40,9 @@ void operatortypes_object()
 
   WM_operatortype_append(OBJECT_OT_mode_set);
   WM_operatortype_append(OBJECT_OT_mode_set_with_submode);
+  WM_operatortype_append(OBJECT_OT_custom_mode_toggle);
+  WM_operatortype_append(OBJECT_OT_custom_mode_undo_push);
+  WM_operatortype_append(OBJECT_OT_external_draw_test_toggle);
   WM_operatortype_append(OBJECT_OT_editmode_toggle);
   WM_operatortype_append(OBJECT_OT_posemode_toggle);
   WM_operatortype_append(OBJECT_OT_shade_smooth);

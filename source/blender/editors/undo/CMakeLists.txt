@@ -14,6 +14,7 @@ set(INC_SYS
 )
 
 set(SRC
+  custom_mode_undo.cc
   ed_undo.cc
   memfile_undo.cc
   undo_system_types.cc

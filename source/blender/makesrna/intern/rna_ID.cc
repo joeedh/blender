@@ -2341,6 +2341,10 @@ static void rna_def_ID(BlenderRNA *brna)
       {ID_RECALC_TRANSFORM, "OBJECT", 0, "Object", ""},
       {ID_RECALC_GEOMETRY, "DATA", 0, "Data", ""},
       {ID_RECALC_ANIMATION, "TIME", 0, "Time", ""},
+      /* Display-only refresh: re-syncs the object in the draw manager without
+       * re-evaluating its geometry (the tag sculpt-style fast draw paths use
+       * per stroke step). */
+      {ID_RECALC_SHADING, "SHADING", 0, "Shading", ""},
       {0, nullptr, 0, nullptr, nullptr},
   };
 

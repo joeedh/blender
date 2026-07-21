@@ -64,6 +64,7 @@ static const EnumPropertyItem space_items[] = {
 #  include "BKE_mesh.hh"
 #  include "BKE_mesh_runtime.hh"
 #  include "BKE_modifier.hh"
+#  include "BKE_multires.hh"
 #  include "BKE_object.hh"
 #  include "BKE_object_types.hh"
 #  include "BKE_report.hh"
@@ -420,6 +421,85 @@ static void rna_Object_crazyspace_displacement_to_original(Object *object,
 static void rna_Object_crazyspace_eval_clear(Object *object)
 {
   BKE_crazyspace_api_eval_clear(object);
+}
+
+static void rna_Object_multires_reshape_from_positions(Object *object,
+                                                       ReportList *reports,
+                                                       Depsgraph *depsgraph,
+                                                       const float *positions,
+                                                       int positions_num)
+{
+  MultiresModifierData *mmd = reinterpret_cast<MultiresModifierData *>(
+      BKE_modifiers_findby_type(object, eModifierType_Multires));
+  if (mmd == nullptr) {
+    BKE_report(reports, RPT_ERROR, "Object has no multires modifier");
+    return;
+  }
+  const Span<float3> grid_positions(reinterpret_cast<const float3 *>(positions),
+                                    positions_num / 3);
+  if (!multiresModifier_reshapeFromPositions(depsgraph, mmd, object, grid_positions)) {
+    BKE_report(reports, RPT_ERROR, "Multires reshape failed (grid sample count mismatch)");
+  }
+}
+
+static void rna_Object_multires_reshape_from_vert_positions(Object *object,
+                                                            ReportList *reports,
+                                                            Depsgraph *depsgraph,
+                                                            const float *positions,
+                                                            int positions_num)
+{
+  MultiresModifierData *mmd = reinterpret_cast<MultiresModifierData *>(
+      BKE_modifiers_findby_type(object, eModifierType_Multires));
+  if (mmd == nullptr) {
+    BKE_report(reports, RPT_ERROR, "Object has no multires modifier");
+    return;
+  }
+  const Span<float3> vert_positions(reinterpret_cast<const float3 *>(positions),
+                                    positions_num / 3);
+  if (!multiresModifier_reshapeFromVertPositions(depsgraph, mmd, object, vert_positions)) {
+    BKE_report(reports, RPT_ERROR, "Multires reshape failed (vertex count mismatch)");
+  }
+}
+
+static void rna_Object_multires_mask_from_vert_values(Object *object,
+                                                      Main *bmain,
+                                                      ReportList *reports,
+                                                      Depsgraph *depsgraph,
+                                                      const float *values,
+                                                      int values_num)
+{
+  MultiresModifierData *mmd = reinterpret_cast<MultiresModifierData *>(
+      BKE_modifiers_findby_type(object, eModifierType_Multires));
+  if (mmd == nullptr) {
+    BKE_report(reports, RPT_ERROR, "Object has no multires modifier");
+    return;
+  }
+  const Span<float> vert_values(values, values_num);
+  if (!multiresModifier_maskFromVertValues(depsgraph, bmain, mmd, object, vert_values)) {
+    BKE_report(reports, RPT_ERROR, "Multires mask write failed (vertex count mismatch)");
+  }
+}
+
+static void rna_Object_multires_mask_to_vert_values(Object *object,
+                                                    ReportList *reports,
+                                                    Depsgraph *depsgraph,
+                                                    float **r_values,
+                                                    int *r_values_num,
+                                                    bool *r_has_mask)
+{
+  *r_values = nullptr;
+  *r_values_num = 0;
+  *r_has_mask = false;
+  MultiresModifierData *mmd = reinterpret_cast<MultiresModifierData *>(
+      BKE_modifiers_findby_type(object, eModifierType_Multires));
+  if (mmd == nullptr) {
+    BKE_report(reports, RPT_ERROR, "Object has no multires modifier");
+    return;
+  }
+  *r_values = multiresModifier_maskToVertValues(depsgraph, mmd, object, r_values_num, r_has_mask);
+  if (*r_values == nullptr) {
+    BKE_report(reports, RPT_ERROR, "Multires mask read failed");
+  }
 }
 
 /* copied from Mesh_getFromObject and adapted to RNA interface */
@@ -1005,6 +1085,100 @@ void RNA_api_object(StructRNA *srna)
   parm = RNA_def_property(func, "scale_return", PROP_FLOAT, PROP_NONE);
   RNA_def_property_ui_text(
       parm, "", "The ortho scale to aim to be able to see all given points (if relevant)");
+  RNA_def_parameter_flags(parm, PropertyFlag(0), PARM_OUTPUT);
+
+  /* Multires reshape from a flat per-grid position array. */
+  func = RNA_def_function(
+      srna, "multires_reshape_from_positions", "rna_Object_multires_reshape_from_positions");
+  RNA_def_function_ui_description(func,
+                                  "Bake a top-level multires surface given as absolute "
+                                  "object-space positions in per-grid row-major order "
+                                  "(grid * grid_area + y * grid_size + x, grids in loop order)");
+  RNA_def_function_flag(func, FUNC_USE_REPORTS);
+  parm = RNA_def_pointer(
+      func, "depsgraph", "Depsgraph", "", "Depsgraph to get evaluated data from");
+  RNA_def_parameter_flags(parm, PropertyFlag(0), PARM_REQUIRED);
+  parm = RNA_def_float_array(func,
+                             "positions",
+                             1,
+                             nullptr,
+                             -FLT_MAX,
+                             FLT_MAX,
+                             "",
+                             "Flat grid-sample positions (3 floats each)",
+                             -FLT_MAX,
+                             FLT_MAX);
+  RNA_def_parameter_flags(parm, PROP_NEVER_NULL | PROP_DYNAMIC, PARM_REQUIRED);
+
+  func = RNA_def_function(srna,
+                          "multires_reshape_from_vert_positions",
+                          "rna_Object_multires_reshape_from_vert_positions");
+  RNA_def_function_ui_description(func,
+                                  "Bake a top-level multires surface given as absolute "
+                                  "object-space positions in subdivided-mesh vertex order "
+                                  "(one position per subdivided vertex)");
+  RNA_def_function_flag(func, FUNC_USE_REPORTS);
+  parm = RNA_def_pointer(
+      func, "depsgraph", "Depsgraph", "", "Depsgraph to get evaluated data from");
+  RNA_def_parameter_flags(parm, PropertyFlag(0), PARM_REQUIRED);
+  parm = RNA_def_float_array(func,
+                             "positions",
+                             1,
+                             nullptr,
+                             -FLT_MAX,
+                             FLT_MAX,
+                             "",
+                             "Flat subdivided-vertex positions (3 floats each)",
+                             -FLT_MAX,
+                             FLT_MAX);
+  RNA_def_parameter_flags(parm, PROP_NEVER_NULL | PROP_DYNAMIC, PARM_REQUIRED);
+
+  func = RNA_def_function(srna,
+                          "multires_mask_from_vert_values",
+                          "rna_Object_multires_mask_from_vert_values");
+  RNA_def_function_ui_description(func,
+                                  "Write the multires paint mask from top-level values in "
+                                  "subdivided-mesh vertex order (one float per subdivided "
+                                  "vertex); the mask layer is created when missing");
+  RNA_def_function_flag(func, FUNC_USE_REPORTS | FUNC_USE_MAIN);
+  parm = RNA_def_pointer(
+      func, "depsgraph", "Depsgraph", "", "Depsgraph to get evaluated data from");
+  RNA_def_parameter_flags(parm, PropertyFlag(0), PARM_REQUIRED);
+  parm = RNA_def_float_array(func,
+                             "mask_values",
+                             1,
+                             nullptr,
+                             0.0f,
+                             1.0f,
+                             "",
+                             "Per-subdivided-vertex mask values",
+                             0.0f,
+                             1.0f);
+  RNA_def_parameter_flags(parm, PROP_NEVER_NULL | PROP_DYNAMIC, PARM_REQUIRED);
+
+  func = RNA_def_function(
+      srna, "multires_mask_to_vert_values", "rna_Object_multires_mask_to_vert_values");
+  RNA_def_function_ui_description(func,
+                                  "Read the multires paint mask as top-level values in "
+                                  "subdivided-mesh vertex order (all zero when the object "
+                                  "has no mask layer)");
+  RNA_def_function_flag(func, FUNC_USE_REPORTS);
+  parm = RNA_def_pointer(
+      func, "depsgraph", "Depsgraph", "", "Depsgraph to get evaluated data from");
+  RNA_def_parameter_flags(parm, PropertyFlag(0), PARM_REQUIRED);
+  parm = RNA_def_float_array(func,
+                             "mask_values",
+                             1,
+                             nullptr,
+                             0.0f,
+                             1.0f,
+                             "",
+                             "Per-subdivided-vertex mask values",
+                             0.0f,
+                             1.0f);
+  RNA_def_parameter_flags(parm, PROP_DYNAMIC, PARM_OUTPUT);
+  parm = RNA_def_boolean(
+      func, "has_mask", false, "Has Mask", "Whether the object had a mask layer");
   RNA_def_parameter_flags(parm, PropertyFlag(0), PARM_OUTPUT);
 
   /* Crazy-space access. */

@@ -519,6 +519,12 @@ struct Object {
   /** Local object mode. */
   eObjectMode mode = OB_MODE_OBJECT;
   eObjectMode restore_mode = OB_MODE_OBJECT;
+  /**
+   * Idname of the addon-registered mode when `mode` has #OB_MODE_CUSTOM set
+   * (#ObjectModeType.idname); empty otherwise. Persists so the mode can be
+   * restored on load; sanitized to #OB_MODE_OBJECT when unregistered.
+   */
+  char custom_mode_id[64] = {};
 
   /* materials */
   /** Material slots. */

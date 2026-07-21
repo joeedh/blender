@@ -71,6 +71,11 @@ const EnumPropertyItem rna_enum_object_mode_items[] = {
      "Vertex Paint",
      "Grease Pencil Vertex Paint Strokes"},
     {OB_MODE_SCULPT_CURVES, "SCULPT_CURVES", ICON_SCULPTMODE_HLT, "Sculpt Mode", ""},
+    {OB_MODE_CUSTOM,
+     "CUSTOM",
+     ICON_NONE,
+     "Custom",
+     "Addon-registered mode (identified by Object.custom_mode)"},
     {0, nullptr, 0, nullptr, nullptr},
 };
 
@@ -3040,6 +3045,15 @@ static void rna_def_object(BlenderRNA *brna)
   RNA_def_property_enum_items(prop, rna_enum_object_mode_items);
   RNA_def_property_clear_flag(prop, PROP_EDITABLE);
   RNA_def_property_ui_text(prop, "Mode", "Object interaction mode");
+
+  prop = RNA_def_property(srna, "custom_mode", PROP_STRING, PROP_NONE);
+  RNA_def_property_string_sdna(prop, nullptr, "custom_mode_id");
+  RNA_def_property_clear_flag(prop, PROP_EDITABLE);
+  RNA_def_property_ui_text(
+      prop,
+      "Custom Mode",
+      "Idname of the addon-registered mode when the mode is 'CUSTOM' "
+      "(the last-used custom mode otherwise)");
 
   /* for data access */
   prop = RNA_def_property(srna, "bound_box", PROP_FLOAT, PROP_NONE);
