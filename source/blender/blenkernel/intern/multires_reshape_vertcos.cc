@@ -399,8 +399,8 @@ static bool multires_reshape_mask_walk(const MultiresReshapeContext *reshape_con
       reshape_context->subdiv, &foreach_context, &mesh_settings, reshape_context->base_mesh);
 }
 
-bool multires_reshape_assign_mask_from_vert_values(
-    const MultiresReshapeContext *reshape_context, const Span<float> values)
+bool multires_reshape_assign_mask_from_vert_values(const MultiresReshapeContext *reshape_context,
+                                                   const Span<float> values)
 {
   MultiresReshapeMaskContext mask_context{};
   mask_context.reshape_context = reshape_context;

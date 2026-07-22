@@ -3049,11 +3049,10 @@ static void rna_def_object(BlenderRNA *brna)
   prop = RNA_def_property(srna, "custom_mode", PROP_STRING, PROP_NONE);
   RNA_def_property_string_sdna(prop, nullptr, "custom_mode_id");
   RNA_def_property_clear_flag(prop, PROP_EDITABLE);
-  RNA_def_property_ui_text(
-      prop,
-      "Custom Mode",
-      "Idname of the addon-registered mode when the mode is 'CUSTOM' "
-      "(the last-used custom mode otherwise)");
+  RNA_def_property_ui_text(prop,
+                           "Custom Mode",
+                           "Idname of the addon-registered mode when the mode is 'CUSTOM' "
+                           "(the last-used custom mode otherwise)");
 
   /* for data access */
   prop = RNA_def_property(srna, "bound_box", PROP_FLOAT, PROP_NONE);

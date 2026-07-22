@@ -198,8 +198,7 @@ static void object_mode_paint_cursor_draw(bContext *C,
 {
   ObjectModeType *mt = static_cast<ObjectModeType *>(customdata);
   const Object *ob = CTX_data_active_object(C);
-  if (ob == nullptr || (ob->mode & OB_MODE_CUSTOM) == 0 ||
-      !STREQ(ob->custom_mode_id, mt->idname))
+  if (ob == nullptr || (ob->mode & OB_MODE_CUSTOM) == 0 || !STREQ(ob->custom_mode_id, mt->idname))
   {
     return;
   }
@@ -363,8 +362,7 @@ static StructRNA *rna_ObjectModeType_register(Main *bmain,
   mt->draw_cursor = have_function[6] ? object_mode_draw_cursor : nullptr;
 
   if (!BKE_object_mode_type_add(mt)) {
-    BKE_reportf(
-        reports, RPT_ERROR, "%s '%s' could not be registered", error_prefix, identifier);
+    BKE_reportf(reports, RPT_ERROR, "%s '%s' could not be registered", error_prefix, identifier);
     RNA_struct_free_extension(mt->rna_ext.srna, &mt->rna_ext);
     RNA_struct_free(&RNA_blender_rna_get(), mt->rna_ext.srna);
     MEM_delete(mt);
@@ -446,8 +444,8 @@ static void rna_def_object_mode_type(BlenderRNA *brna)
 
   /* Callbacks. Order defines the `have_function[]` indexes in register. */
   func = RNA_def_function(srna, "enter", nullptr);
-  RNA_def_function_ui_description(
-      func, "Build the mode's session state when an object enters the mode");
+  RNA_def_function_ui_description(func,
+                                  "Build the mode's session state when an object enters the mode");
   RNA_def_function_flag(func, FUNC_REGISTER_OPTIONAL | FUNC_ALLOW_WRITE);
   parm = RNA_def_pointer(func, "context", "Context", "", "");
   RNA_def_parameter_flags(parm, PropertyFlag(0), PARM_REQUIRED);
@@ -529,11 +527,10 @@ static void rna_def_object_mode_type(BlenderRNA *brna)
   prop = RNA_def_property(srna, "bl_idname", PROP_STRING, PROP_NONE);
   RNA_def_property_string_sdna(prop, nullptr, "idname");
   RNA_def_property_flag(prop, PROP_REGISTER);
-  RNA_def_property_ui_text(
-      prop,
-      "ID Name",
-      "Unique mode identifier, also the `context.mode` string while active; "
-      "use an addon-prefixed lowercase name (e.g. \"my_addon.sculpt2\")");
+  RNA_def_property_ui_text(prop,
+                           "ID Name",
+                           "Unique mode identifier, also the `context.mode` string while active; "
+                           "use an addon-prefixed lowercase name (e.g. \"my_addon.sculpt2\")");
 
   prop = RNA_def_property(srna, "bl_label", PROP_STRING, PROP_NONE);
   RNA_def_property_string_sdna(prop, nullptr, "label");
@@ -549,10 +546,8 @@ static void rna_def_object_mode_type(BlenderRNA *brna)
   prop = RNA_def_property(srna, "bl_object_types", PROP_ENUM, PROP_NONE);
   RNA_def_property_flag(prop, PROP_REGISTER | PROP_ENUM_FLAG);
   RNA_def_property_enum_items(prop, object_mode_object_type_items);
-  RNA_def_property_enum_funcs(prop,
-                              "rna_ObjectModeType_object_types_get",
-                              "rna_ObjectModeType_object_types_set",
-                              nullptr);
+  RNA_def_property_enum_funcs(
+      prop, "rna_ObjectModeType_object_types_get", "rna_ObjectModeType_object_types_set", nullptr);
   RNA_def_property_ui_text(prop, "Object Types", "Object types the mode can be entered on");
 
   prop = RNA_def_property(srna, "bl_keymap", PROP_STRING, PROP_NONE);
@@ -564,10 +559,10 @@ static void rna_def_object_mode_type(BlenderRNA *brna)
   prop = RNA_def_property(srna, "bl_default_tool", PROP_STRING, PROP_NONE);
   RNA_def_property_string_sdna(prop, nullptr, "default_tool");
   RNA_def_property_flag(prop, PROP_REGISTER_OPTIONAL);
-  RNA_def_property_ui_text(
-      prop,
-      "Default Tool",
-      "Identifier of the tool made active when entering the mode (empty uses the generic default)");
+  RNA_def_property_ui_text(prop,
+                           "Default Tool",
+                           "Identifier of the tool made active when entering the mode (empty uses "
+                           "the generic default)");
 
   prop = RNA_def_property(srna, "bl_draw_provider", PROP_STRING, PROP_NONE);
   RNA_def_property_string_funcs(prop,

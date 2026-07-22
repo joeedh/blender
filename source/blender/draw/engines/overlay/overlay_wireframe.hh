@@ -11,9 +11,9 @@
 #include "BKE_paint.hh"
 #include "DNA_volume_types.h"
 
+#include "BKE_object_draw_provider.hh"
 #include "DRW_render.hh"
 #include "draw_common.hh"
-#include "BKE_object_draw_provider.hh"
 
 #include "draw_sculpt.hh"
 

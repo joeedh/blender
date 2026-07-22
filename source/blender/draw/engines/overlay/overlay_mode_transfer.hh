@@ -12,8 +12,8 @@
 
 #include "BKE_paint.hh"
 
-#include "draw_cache.hh"
 #include "BKE_object_draw_provider.hh"
+#include "draw_cache.hh"
 
 #include "draw_external.hh"
 #include "draw_sculpt.hh"

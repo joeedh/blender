@@ -236,8 +236,7 @@ static void node_upload(NodeCache &cache,
       cache.col.reset();
     }
     if (have_uv_src) {
-      cache.uv = gpu::VertBufPtr(
-          GPU_vertbuf_create_with_format_ex(*uv_format, GPU_USAGE_DYNAMIC));
+      cache.uv = gpu::VertBufPtr(GPU_vertbuf_create_with_format_ex(*uv_format, GPU_USAGE_DYNAMIC));
       GPU_vertbuf_data_alloc(*cache.uv, node.verts_num);
     }
     else {
@@ -249,8 +248,8 @@ static void node_upload(NodeCache &cache,
   }
 
   MutableSpan<float3> positions = cache.pos->data<float3>();
-  positions.copy_from(Span<float3>(reinterpret_cast<const float3 *>(node.positions),
-                                   node.verts_num));
+  positions.copy_from(
+      Span<float3>(reinterpret_cast<const float3 *>(node.positions), node.verts_num));
 
   MutableSpan<short4> normals = cache.nor->data<short4>();
   if (node.normals != nullptr) {
@@ -345,8 +344,7 @@ Vector<SculptBatch> external_batches_get(const Object *ob, SculptBatchFeature /*
   const Object *ob_orig = DEG_get_original(ob);
   const unsigned int object_key = ob_orig->id.session_uid;
   ExternalDrawNode *nodes = nullptr;
-  const int nodes_num = provider->nodes_get(
-      provider->user_data, object_key, &request, &nodes);
+  const int nodes_num = provider->nodes_get(provider->user_data, object_key, &request, &nodes);
   if (nodes_num == 0 || nodes == nullptr) {
     provider->nodes_release(provider->user_data, object_key);
     return {};

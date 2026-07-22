@@ -93,34 +93,33 @@ class Fade : Overlay {
 
     const bool draw_bone_selection = (ob_ref.object->type == OB_MESH) && state.do_pose_fade_geom;
 
-    auto fade_sync =
-        [](Manager &manager, const ObjectRef &ob_ref, const State &state, PassMain::Sub &sub) {
-          const bool use_sculpt_pbvh = BKE_sculptsession_use_pbvh_draw(ob_ref.object,
-                                                                       state.rv3d) &&
-                                       !state.is_image_render;
+    auto fade_sync = [](Manager &manager,
+                        const ObjectRef &ob_ref,
+                        const State &state,
+                        PassMain::Sub &sub) {
+      const bool use_sculpt_pbvh = BKE_sculptsession_use_pbvh_draw(ob_ref.object, state.rv3d) &&
+                                   !state.is_image_render;
 
-          if (use_sculpt_pbvh) {
-            ResourceHandleRange handle = manager.unique_handle_for_sculpt(ob_ref);
+      if (use_sculpt_pbvh) {
+        ResourceHandleRange handle = manager.unique_handle_for_sculpt(ob_ref);
 
-            for (SculptBatch &batch : sculpt_batches_get(ob_ref.object, SCULPT_BATCH_DEFAULT)) {
-              sub.draw(batch.batch, handle);
-            }
-          }
-          else if (BKE_object_use_external_draw(ob_ref.object, state.rv3d) &&
-                   !state.is_image_render)
-          {
-            ResourceHandleRange handle = manager.unique_handle(ob_ref);
-            for (SculptBatch &batch : external_batches_get(ob_ref.object, SCULPT_BATCH_DEFAULT)) {
-              sub.draw(batch.batch, handle);
-            }
-          }
-          else {
-            gpu::Batch *geom = DRW_cache_object_surface_get(const_cast<Object *>(ob_ref.object));
-            if (geom) {
-              sub.draw(geom, manager.unique_handle(ob_ref));
-            }
-          }
-        };
+        for (SculptBatch &batch : sculpt_batches_get(ob_ref.object, SCULPT_BATCH_DEFAULT)) {
+          sub.draw(batch.batch, handle);
+        }
+      }
+      else if (BKE_object_use_external_draw(ob_ref.object, state.rv3d) && !state.is_image_render) {
+        ResourceHandleRange handle = manager.unique_handle(ob_ref);
+        for (SculptBatch &batch : external_batches_get(ob_ref.object, SCULPT_BATCH_DEFAULT)) {
+          sub.draw(batch.batch, handle);
+        }
+      }
+      else {
+        gpu::Batch *geom = DRW_cache_object_surface_get(const_cast<Object *>(ob_ref.object));
+        if (geom) {
+          sub.draw(geom, manager.unique_handle(ob_ref));
+        }
+      }
+    };
 
     if (draw_bone_selection) {
       fade_sync(manager,

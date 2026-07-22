@@ -149,9 +149,7 @@ void ED_custom_mode_undo_push(bContext *C, const char *name, const int state_id,
   }
   /* Apply the step-count limit before the push (like #ED_undo_push), but only
    * when at the stack tip so a mid-history push does not truncate the future. */
-  if (U.undosteps > 0 && ustack->step_active != nullptr &&
-      ustack->step_active->next == nullptr)
-  {
+  if (U.undosteps > 0 && ustack->step_active != nullptr && ustack->step_active->next == nullptr) {
     BKE_undosys_stack_limit_steps_and_memory(ustack, U.undosteps - 1, 0);
   }
 
@@ -168,8 +166,7 @@ void ED_custom_mode_undo_push(bContext *C, const char *name, const int state_id,
    * eviction (evicted CUSTOM_MODE steps free their meshlog entry via
    * `step_free` -> `undo_free`). */
   if (U.undomemory != 0) {
-    BKE_undosys_stack_limit_steps_and_memory(
-        ustack, -1, size_t(U.undomemory) * 1024 * 1024);
+    BKE_undosys_stack_limit_steps_and_memory(ustack, -1, size_t(U.undomemory) * 1024 * 1024);
   }
 }
 

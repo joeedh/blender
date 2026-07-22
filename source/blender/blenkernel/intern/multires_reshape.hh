@@ -307,8 +307,8 @@ bool multires_reshape_assign_final_coords_from_vertcos(
  * scattered to every grid replica). Requires the context's mask layer;
  * false when the vertex count does not match the reshape level.
  */
-bool multires_reshape_assign_mask_from_vert_values(
-    const MultiresReshapeContext *reshape_context, Span<float> values);
+bool multires_reshape_assign_mask_from_vert_values(const MultiresReshapeContext *reshape_context,
+                                                   Span<float> values);
 
 /**
  * Gather the grid paint mask into per-subdivided-vertex values (the read

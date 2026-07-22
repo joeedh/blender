@@ -1133,9 +1133,8 @@ void RNA_api_object(StructRNA *srna)
                              FLT_MAX);
   RNA_def_parameter_flags(parm, PROP_NEVER_NULL | PROP_DYNAMIC, PARM_REQUIRED);
 
-  func = RNA_def_function(srna,
-                          "multires_mask_from_vert_values",
-                          "rna_Object_multires_mask_from_vert_values");
+  func = RNA_def_function(
+      srna, "multires_mask_from_vert_values", "rna_Object_multires_mask_from_vert_values");
   RNA_def_function_ui_description(func,
                                   "Write the multires paint mask from top-level values in "
                                   "subdivided-mesh vertex order (one float per subdivided "
