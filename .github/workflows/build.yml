@@ -120,24 +120,30 @@ jobs:
           # Blender requires Xcode >= 16; select the newest 16.x on the runner.
           sudo xcode-select -s "$(ls -d /Applications/Xcode_16*.app | sort -V | tail -1)"
 
-      - name: Configure (Ninja)
-        if: runner.os != 'Windows'
+      # Put cl.exe + the MSVC INCLUDE/LIB environment on PATH. CMake's
+      # "Visual Studio" generator fails to locate VS on the runner image, so we
+      # build with Ninja + cl instead, matching the Linux/macOS path.
+      - name: Set up MSVC (Windows)
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Install build dependencies (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          choco install ninja -y --no-progress
+          echo "CC=cl" >> "$GITHUB_ENV"
+          echo "CXX=cl" >> "$GITHUB_ENV"
+
+      # One Ninja + single-config path for all three platforms. The compiler is
+      # selected per-OS via CC/CXX (gcc-14 on Linux, cl on Windows, AppleClang
+      # default on macOS).
+      - name: Configure
         run: >
           cmake -S . -B ../build -G Ninja
           -DCMAKE_BUILD_TYPE=RelWithDebInfo
           -DWITH_BUILDINFO=OFF
 
-      - name: Configure (Visual Studio)
-        if: runner.os == 'Windows'
-        # Multi-config generator; the build type is chosen at --build time.
-        run: >
-          cmake -S . -B ../build -G "Visual Studio 17 2022" -A x64
-          -DWITH_BUILDINFO=OFF
-
-      - name: Build (Ninja)
-        if: runner.os != 'Windows'
+      - name: Build
         run: cmake --build ../build --parallel
-
-      - name: Build (Visual Studio)
-        if: runner.os == 'Windows'
-        run: cmake --build ../build --config RelWithDebInfo --parallel
