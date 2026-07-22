@@ -1,0 +1,118 @@
+# Manual, multi-platform compile check for this fork.
+#
+# Builds Blender (RelWithDebInfo) on Linux x64, macOS arm64 and Windows x64 to
+# verify the branch compiles everywhere. Triggered by hand from the Actions tab;
+# it produces no downloadable artifacts.
+#
+# Precompiled libraries come from projects.blender.org (git-LFS submodules) and
+# are cached per platform, keyed on the pinned submodule commit, so a cache hit
+# skips the multi-GB download entirely.
+name: Build
+
+on:
+  workflow_dispatch:
+
+# A newer manual run supersedes an in-flight one on the same ref.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runs-on }}
+    # Full Blender builds are long; the lib download on a cold cache adds more.
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x64
+            runs-on: ubuntu-latest
+            lib_dir: lib/linux_x64
+          - name: macOS arm64
+            runs-on: macos-14
+            lib_dir: lib/macos_arm64
+          - name: Windows x64
+            runs-on: windows-latest
+            lib_dir: lib/windows_x64
+
+    defaults:
+      run:
+        # git-bash is present on all three runners; keep the steps uniform.
+        shell: bash
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Library submodules are fetched separately (and cached) below.
+          submodules: false
+
+      # The Linux runner is tight on disk once libs + build tree land; reclaim
+      # space we don't use before anything large is written.
+      - name: Free disk space (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/.ghcup /opt/hostedtoolcache/CodeQL || true
+          df -h /
+
+      - name: Resolve library submodule commit
+        id: libcommit
+        run: echo "sha=$(git rev-parse "HEAD:${{ matrix.lib_dir }}")" >> "$GITHUB_OUTPUT"
+
+      - name: Cache precompiled libraries
+        id: libcache
+        uses: actions/cache@v4
+        with:
+          path: ${{ matrix.lib_dir }}
+          # Exact-match only: the pinned commit fully determines the contents,
+          # so a hit means we never touch projects.blender.org.
+          key: blender-libs-${{ matrix.lib_dir }}-${{ steps.libcommit.outputs.sha }}
+
+      - name: Fetch precompiled libraries
+        if: steps.libcache.outputs.cache-hit != 'true'
+        # --no-blender: leave the checked-out code alone, only enable + LFS-pull
+        # this platform's library submodule. Handles git-lfs install itself.
+        run: python3 build_files/utils/make_update.py --no-blender
+
+      - name: Install build dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential ninja-build cmake \
+            libx11-dev libxxf86vm-dev libxcursor-dev libxi-dev \
+            libxrandr-dev libxinerama-dev libxkbcommon-dev \
+            libegl-dev libglu1-mesa-dev \
+            libwayland-dev wayland-protocols libdbus-1-dev linux-libc-dev
+
+      - name: Install build dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ninja
+
+      - name: Configure (Ninja)
+        if: runner.os != 'Windows'
+        run: >
+          cmake -S . -B ../build -G Ninja
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          -DWITH_BUILDINFO=OFF
+
+      - name: Configure (Visual Studio)
+        if: runner.os == 'Windows'
+        # Multi-config generator; the build type is chosen at --build time.
+        run: >
+          cmake -S . -B ../build -G "Visual Studio 17 2022" -A x64
+          -DWITH_BUILDINFO=OFF
+
+      - name: Build (Ninja)
+        if: runner.os != 'Windows'
+        run: cmake --build ../build --parallel
+
+      - name: Build (Visual Studio)
+        if: runner.os == 'Windows'
+        run: cmake --build ../build --config RelWithDebInfo --parallel
