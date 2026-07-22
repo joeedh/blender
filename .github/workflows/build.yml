@@ -51,6 +51,22 @@ jobs:
         with:
           # Library submodules are fetched separately (and cached) below.
           submodules: false
+          # Main-repo LFS files (startup.blend, fonts, ...) are pulled in the
+          # next step via Blender's projects.blender.org fallback, so that the
+          # pull is independent of the library cache below.
+          lfs: false
+
+      # startup.blend and other datafiles live in the main repo as Git-LFS
+      # objects; checkout leaves them as pointers. CMake (CMakeLists.txt:92)
+      # rejects the incomplete startup blend, so smudge the real files here.
+      # LFS objects are content-addressed, so projects.blender.org serves the
+      # fork's (unmodified) datafiles even if this GitHub mirror carries no LFS.
+      # This runs every time, independent of the library cache.
+      - name: Fetch main-repo Git LFS files
+        run: |
+          git lfs install --local
+          git remote add lfs-fallback https://projects.blender.org/blender/blender.git || true
+          git lfs pull lfs-fallback
 
       # The Linux runner is tight on disk once libs + build tree land; reclaim
       # space we don't use before anything large is written.
