@@ -34,7 +34,9 @@ jobs:
             runs-on: ubuntu-latest
             lib_dir: lib/linux_x64
           - name: macOS arm64
-            runs-on: macos-14
+            # macos-15 is Apple-silicon and ships Xcode 16 (Blender requires
+            # >= 16); macos-14 defaults to Xcode 15.
+            runs-on: macos-15
             lib_dir: lib/macos_arm64
           - name: Windows x64
             runs-on: windows-latest
@@ -113,7 +115,10 @@ jobs:
 
       - name: Install build dependencies (macOS)
         if: runner.os == 'macOS'
-        run: brew install ninja
+        run: |
+          brew install ninja
+          # Blender requires Xcode >= 16; select the newest 16.x on the runner.
+          sudo xcode-select -s "$(ls -d /Applications/Xcode_16*.app | sort -V | tail -1)"
 
       - name: Configure (Ninja)
         if: runner.os != 'Windows'
