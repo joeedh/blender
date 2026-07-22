@@ -100,12 +100,16 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
+          # Blender requires GCC >= 14; ubuntu-latest defaults to 13. Install
+          # gcc-14/g++-14 and select them for the shared configure step below.
           sudo apt-get install -y --no-install-recommends \
-            build-essential ninja-build cmake \
+            build-essential gcc-14 g++-14 ninja-build cmake \
             libx11-dev libxxf86vm-dev libxcursor-dev libxi-dev \
             libxrandr-dev libxinerama-dev libxkbcommon-dev \
             libegl-dev libglu1-mesa-dev \
             libwayland-dev wayland-protocols libdbus-1-dev linux-libc-dev
+          echo "CC=gcc-14" >> "$GITHUB_ENV"
+          echo "CXX=g++-14" >> "$GITHUB_ENV"
 
       - name: Install build dependencies (macOS)
         if: runner.os == 'macOS'
