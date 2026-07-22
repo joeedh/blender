@@ -87,7 +87,6 @@ void OBJECT_OT_mode_set(wmOperatorType *ot);
 void OBJECT_OT_mode_set_with_submode(wmOperatorType *ot);
 void OBJECT_OT_custom_mode_toggle(wmOperatorType *ot);
 void OBJECT_OT_custom_mode_undo_push(wmOperatorType *ot);
-void OBJECT_OT_external_draw_test_toggle(wmOperatorType *ot);
 void OBJECT_OT_editmode_toggle(wmOperatorType *ot);
 void OBJECT_OT_posemode_toggle(wmOperatorType *ot);
 void OBJECT_OT_shade_smooth(wmOperatorType *ot);
