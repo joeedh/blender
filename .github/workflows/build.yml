@@ -1,8 +1,11 @@
-# Manual, multi-platform compile check for this fork.
+# Manual, multi-platform build for this fork.
 #
 # Builds Blender (RelWithDebInfo) on Linux x64, macOS arm64 and Windows x64 to
-# verify the branch compiles everywhere. Triggered by hand from the Actions tab;
-# it produces no downloadable artifacts.
+# verify the branch compiles everywhere AND to publish a portable install tree
+# per platform. Triggered by hand from the Actions tab. Each job uploads a
+# `blender-install-<os>` artifact (the `install` target's `bin/` tree) that the
+# addon repo's `tools/fetch-blender-dist.mjs` fetches (via `gh`) and bundles
+# with the SculptCore addon.
 #
 # Precompiled libraries come from projects.blender.org (git-LFS submodules) and
 # are cached per platform, keyed on the pinned submodule commit, so a cache hit
@@ -138,12 +141,26 @@ jobs:
 
       # One Ninja + single-config path for all three platforms. The compiler is
       # selected per-OS via CC/CXX (gcc-14 on Linux, cl on Windows, AppleClang
-      # default on macOS).
+      # default on macOS). Build in-workspace (`build/`) so the portable install
+      # tree at `build/bin` is a clean upload path (no `..` outside the checkout).
       - name: Configure
         run: >
-          cmake -S . -B ../build -G Ninja
+          cmake -S . -B build -G Ninja
           -DCMAKE_BUILD_TYPE=RelWithDebInfo
           -DWITH_BUILDINFO=OFF
 
       - name: Build
-        run: cmake --build ../build --parallel
+        run: cmake --build build --parallel
+
+      # The `install` target populates `build/bin` with a portable Blender (the
+      # same tree tools/build-blender-dist.mjs stages from locally). On macOS
+      # this is `build/bin/Blender.app`.
+      - name: Install (portable tree)
+        run: cmake --build build --target install --parallel
+
+      - name: Upload Blender install
+        uses: actions/upload-artifact@v4
+        with:
+          name: blender-install-${{ runner.os }}
+          path: build/bin/**
+          if-no-files-found: error
