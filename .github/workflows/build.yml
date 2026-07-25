@@ -154,9 +154,17 @@ jobs:
 
       # The `install` target populates `build/bin` with a portable Blender (the
       # same tree tools/build-blender-dist.mjs stages from locally). On macOS
-      # this is `build/bin/Blender.app`.
+      # this is `build/bin/Blender.app`. Strip on Linux/macOS: RelWithDebInfo
+      # embeds debug symbols in the binaries, ballooning the Linux artifact to
+      # multiple GB — `--strip` drops them from the installed executables. Windows
+      # keeps debug info in separate .pdb files, so there is nothing to strip.
       - name: Install (portable tree)
-        run: cmake --build build --target install --parallel
+        run: |
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cmake --install build
+          else
+            cmake --install build --strip
+          fi
 
       - name: Upload Blender install
         uses: actions/upload-artifact@v4
