@@ -5,7 +5,9 @@
 # per platform. Triggered by hand from the Actions tab. Each job uploads a
 # `blender-install-<os>` artifact (the `install` target's `bin/` tree) that the
 # addon repo's `tools/fetch-blender-dist.mjs` fetches (via `gh`) and bundles
-# with the SculptCore addon.
+# with the SculptCore addon. On Linux/macOS that artifact is a single
+# uncompressed `blender-install.tar` (see the upload steps for why); on Windows
+# it is the bin/ tree itself.
 #
 # Precompiled libraries come from projects.blender.org (git-LFS submodules) and
 # are cached per platform, keyed on the pinned submodule commit, so a cache hit
@@ -166,7 +168,32 @@ jobs:
             cmake --install build --strip
           fi
 
-      - name: Upload Blender install
+      # actions/upload-artifact always re-zips its payload, and the zip GitHub
+      # writes carries neither Unix mode bits nor symlinks — so a raw build/bin
+      # upload arrives with the `blender` binary non-executable and the macOS
+      # .app framework symlinks flattened into file copies. Hand it a tar
+      # instead: modes and symlinks are entry metadata *inside* the archive, so
+      # they ride through the zip wrapper untouched. Left uncompressed on
+      # purpose — the artifact upload compresses it anyway, and an uncompressed
+      # tar can be appended to (`tar -rf`), which is how the addon repo's
+      # fetch tool injects the addon without unpacking the tree onto a
+      # filesystem that would lose the metadata all over again.
+      - name: Package install tree (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: tar -cf blender-install.tar -C build/bin .
+
+      - name: Upload Blender install (Linux/macOS)
+        if: runner.os != 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: blender-install-${{ runner.os }}
+          path: blender-install.tar
+          if-no-files-found: error
+
+      # Windows has no exec bits or symlinks to preserve, so it keeps the plain
+      # tree upload — a folder is friendlier to consume there anyway.
+      - name: Upload Blender install (Windows)
+        if: runner.os == 'Windows'
         uses: actions/upload-artifact@v4
         with:
           name: blender-install-${{ runner.os }}
