@@ -61,6 +61,15 @@ Core (C/C++):
 - **Vanilla-UI hooks** — `scripts/startup/bl_ui/space_view3d.py`,
   `properties_paint_common.py`: the mode dropdown and paint panels recognize
   registered custom modes generically (no addon name hardcoded).
+- **`.always_enable`** — `scripts/modules/addon_utils.py`. An optional file in
+  any add-on directory (`addon_utils.paths()`) listing add-on modules, one per
+  line, that this *installation* always enables. `_initialize_once()` folds them
+  into `_addons_hidden_core`, so they are enabled with `default_set=False` +
+  `persistent=True`: on at startup (even `--factory-startup`), never stored in
+  `preferences.addons`, never written to `userpref.blend`, not unloaded by
+  `reset_all()`, and hidden from the add-ons list. For builds that bundle an
+  add-on which *is* the product and so must not commandeer the user's config —
+  no add-on name is hardcoded here, Blender never writes the file itself.
 
 ## Conventions
 

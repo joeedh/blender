@@ -51,11 +51,52 @@ _addons_hidden_core = {
     "io_scene_fbx",
 }
 
+# Optional file in an add-on directory (see `paths()`) which extends
+# `_addons_hidden_core` with add-ons this installation always enables.
+# One module name per line; blank lines and `#` comments are ignored.
+#
+# This exists for builds which bundle an add-on that *is* the product, so it
+# must be enabled without depending on (or writing to) the user's preferences.
+# Such an add-on gets the same treatment as the hidden core add-ons above: it is
+# enabled at startup with `default_set=False` (never stored in the preferences,
+# so `userpref.blend` is left alone) and `persistent=True` (so reloading the
+# preferences does not unload it), and it is hidden from the add-ons list.
+#
+# Blender itself never writes this file, it is written by whatever assembles the
+# installation.
+_addons_always_enable_filename = ".always_enable"
+
+
+def _addons_always_enable_read():
+    import os
+
+    result = []
+    for dirpath in paths():
+        filepath = os.path.join(dirpath, _addons_always_enable_filename)
+        try:
+            with open(filepath, "r", encoding="utf-8") as fh:
+                lines = fh.read().splitlines()
+        except FileNotFoundError:
+            continue
+        except Exception as ex:
+            print("Error reading", filepath, ex)
+            continue
+
+        for line in lines:
+            line = line.strip()
+            if (not line) or line.startswith("#"):
+                continue
+            result.append(line)
+    return result
+
 
 # Called only once at startup, avoids calling 'reset_all', correct but slower.
 def _initialize_once():
     for path in paths():
         _bpy.utils._sys_path_ensure_append(path)
+
+    # Must run before the add-ons are enabled below, and after `paths()` is usable.
+    _addons_hidden_core.update(_addons_always_enable_read())
 
     _stale_pending_check_and_remove_once()
 
