@@ -20,6 +20,7 @@
 #include "BKE_context.hh"
 #include "BKE_layer.hh"
 #include "BKE_object.hh"
+#include "BKE_object_modes.hh"
 #include "BKE_paint.hh"
 #include "BKE_vfont.hh"
 
@@ -838,6 +839,14 @@ bool view3d_orbit_calc_center(bContext *C, float r_dyn_ofs[3])
       ((ob_act->mode & OB_MODE_WEIGHT_PAINT) && BKE_object_pose_armature_get(ob_act)) == 0)
   {
     ofs = bke::paint::stroke_get_average(paint, ob_act_eval);
+    is_set = true;
+  }
+  else if (ob_act && (ob_act->mode & OB_MODE_CUSTOM) &&
+           BKE_object_custom_mode_uses_sculpt_paint(ob_act))
+  {
+    /* A custom mode sharing the sculpt paint settings orbits the way sculpt mode
+     * does: around the last stroke's average, or the object origin before one. */
+    BKE_paint_stroke_get_average(paint, ob_act_eval, ofs);
     is_set = true;
   }
   else if (ob_act && ELEM(ob_act->mode,
