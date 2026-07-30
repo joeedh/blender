@@ -58,6 +58,19 @@ Core (C/C++):
   `blenkernel/intern/multires_reshape_vertcos.cc` + `multires_reshape.cc`.
   Engine-agnostic helpers to push a flat vertex-coordinate array back onto a
   multires grid (used by the addon's multires import/export, useful on its own).
+- **Bulk vertex-group weight access** — `makesrna/intern/rna_mesh_api.cc`:
+  `Mesh.vertex_group_element_count()`, `vertex_group_data_get()`,
+  `vertex_group_data_set()`. Read or replace a mesh's entire `MDeformVert`
+  table in one call, as CSR — `offsets` of `len(vertices) + 1` slicing parallel
+  group-index / weight arrays. Weights are not CustomData layers, so
+  `mesh.attributes` and `foreach_get` cannot reach them at all, and the only
+  existing Python route is a loop over every vertex *and every influence*. `_get`
+  returns lists rather than filling caller buffers because RNA function
+  parameters have no caller-preallocated output form. `_set` validates lengths,
+  offset monotonicity and group range **before** it mutates, so a rejected call
+  reports and leaves the mesh untouched. Engine-agnostic and useful on its own
+  (any exporter or rigging script wants it); the addon needs it to hand vertex
+  groups to a sculpt engine and take them back.
 - **Vanilla-UI hooks** — `scripts/startup/bl_ui/space_view3d.py`,
   `properties_paint_common.py`: the mode dropdown and paint panels recognize
   registered custom modes generically (no addon name hardcoded).
