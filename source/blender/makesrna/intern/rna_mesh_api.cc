@@ -6,6 +6,7 @@
  * \ingroup RNA
  */
 
+#include <algorithm>
 #include <cstdlib>
 
 #include "RNA_define.hh"
@@ -19,10 +20,12 @@
 #ifdef RNA_RUNTIME
 
 #  include "DNA_mesh_types.h"
+#  include "DNA_meshdata_types.h"
 
 #  include "BKE_anim_data.hh"
 #  include "BKE_attribute.hh"
 #  include "BKE_customdata.hh"
+#  include "BKE_deform.hh"
 #  include "BKE_geometry_compare.hh"
 #  include "BKE_mesh.h"
 #  include "BKE_mesh.hh"
@@ -178,6 +181,139 @@ static void rna_Mesh_normals_split_custom_set_from_vertices(Mesh *mesh,
   bke::mesh_set_custom_normals_from_verts(*mesh, {vert_normals, numverts});
 
   DEG_id_tag_update(&mesh->id, 0);
+}
+
+static int rna_Mesh_vertex_group_element_count(Mesh *mesh)
+{
+  int total = 0;
+  for (const MDeformVert &dvert : mesh->deform_verts()) {
+    total += dvert.totweight;
+  }
+  return total;
+}
+
+static void rna_Mesh_vertex_group_data_get(Mesh *mesh,
+                                           int **r_offsets,
+                                           int *r_offsets_num,
+                                           int **r_group_indices,
+                                           int *r_group_indices_num,
+                                           float **r_weights,
+                                           int *r_weights_num)
+{
+  const Span<MDeformVert> dverts = mesh->deform_verts();
+  const int verts_num = mesh->verts_num;
+  const int total = rna_Mesh_vertex_group_element_count(mesh);
+
+  /* One allocation per array; RNA frees them after converting to Python.
+   * The payload arrays are never zero-sized, so an all-empty mesh still
+   * returns a usable (if empty) pair rather than a null. */
+  int *offsets = MEM_new_array_uninitialized<int>(size_t(verts_num) + 1, __func__);
+  int *group_indices = MEM_new_array_uninitialized<int>(std::max(size_t(total), size_t(1)),
+                                                        __func__);
+  float *weights = MEM_new_array_uninitialized<float>(std::max(size_t(total), size_t(1)), __func__);
+
+  int at = 0;
+  for (const int i : IndexRange(verts_num)) {
+    offsets[i] = at;
+    if (dverts.is_empty()) {
+      continue;
+    }
+    const MDeformVert &dvert = dverts[i];
+    for (const int k : IndexRange(dvert.totweight)) {
+      group_indices[at] = dvert.dw[k].def_nr;
+      weights[at] = dvert.dw[k].weight;
+      at++;
+    }
+  }
+  offsets[verts_num] = at;
+
+  *r_offsets = offsets;
+  *r_offsets_num = verts_num + 1;
+  *r_group_indices = group_indices;
+  *r_group_indices_num = total;
+  *r_weights = weights;
+  *r_weights_num = total;
+}
+
+static void rna_Mesh_vertex_group_data_set(Mesh *mesh,
+                                           ReportList *reports,
+                                           const int *offsets,
+                                           int offsets_num,
+                                           const int *group_indices,
+                                           int group_indices_num,
+                                           const float *weights,
+                                           int weights_num)
+{
+  const int verts_num = mesh->verts_num;
+  if (offsets_num != verts_num + 1) {
+    BKE_reportf(reports,
+                RPT_ERROR,
+                "Offsets array is %d long, expected %d (one per vertex plus a terminator)",
+                offsets_num,
+                verts_num + 1);
+    return;
+  }
+  if (group_indices_num != weights_num) {
+    BKE_reportf(reports,
+                RPT_ERROR,
+                "Group index and weight arrays differ in length (%d / %d)",
+                group_indices_num,
+                weights_num);
+    return;
+  }
+  if (offsets[verts_num] != group_indices_num) {
+    BKE_reportf(reports,
+                RPT_ERROR,
+                "Offsets terminator is %d, but %d influences were given",
+                offsets[verts_num],
+                group_indices_num);
+    return;
+  }
+
+  /* Validate before touching the mesh: a rejected call must leave the existing
+   * weights alone rather than half-written. */
+  int groups_num = 0;
+  for ([[maybe_unused]] const bDeformGroup &group : mesh->vertex_group_names) {
+    groups_num++;
+  }
+  for (const int i : IndexRange(verts_num)) {
+    if (offsets[i] > offsets[i + 1] || offsets[i] < 0) {
+      BKE_reportf(reports, RPT_ERROR, "Offsets are not non-decreasing at vertex %d", i);
+      return;
+    }
+  }
+  for (const int i : IndexRange(group_indices_num)) {
+    if (group_indices[i] < 0 || group_indices[i] >= groups_num) {
+      BKE_reportf(reports,
+                  RPT_ERROR,
+                  "Group index %d at influence %d is outside the mesh's %d vertex group(s)",
+                  group_indices[i],
+                  i,
+                  groups_num);
+      return;
+    }
+  }
+
+  MutableSpan<MDeformVert> dverts = mesh->deform_verts_for_write();
+  for (const int i : IndexRange(verts_num)) {
+    MDeformVert &dvert = dverts[i];
+    BKE_defvert_clear(&dvert);
+
+    const int run_num = offsets[i + 1] - offsets[i];
+    if (run_num == 0) {
+      continue;
+    }
+    /* One allocation for the whole run, matching what #BKE_defvert_add_index_notest
+     * allocates with — that call would instead reallocate per influence. */
+    dvert.dw = MEM_new_array_zeroed<MDeformWeight>(size_t(run_num), __func__);
+    dvert.totweight = run_num;
+    for (const int k : IndexRange(run_num)) {
+      dvert.dw[k].def_nr = group_indices[offsets[i] + k];
+      dvert.dw[k].weight = weights[offsets[i] + k];
+    }
+  }
+
+  DEG_id_tag_update(&mesh->id, ID_RECALC_GEOMETRY);
 }
 
 static void rna_Mesh_transform(Mesh *mesh, const float mat[16], bool shape_keys)
@@ -356,6 +492,79 @@ void RNA_api_mesh(StructRNA *srna)
   /* TODO: see how array size of 0 works, this shouldn't be used. */
   parm = RNA_def_float_array(func, "normals", 1, nullptr, -1.0f, 1.0f, "", "Normals", 0.0f, 0.0f);
   RNA_def_property_multi_array(parm, 2, normals_array_dim);
+  RNA_def_parameter_flags(parm, PROP_DYNAMIC, PARM_REQUIRED);
+
+  func = RNA_def_function(
+      srna, "vertex_group_element_count", "rna_Mesh_vertex_group_element_count");
+  RNA_def_function_ui_description(func,
+                                  "Total number of vertex group influences over all vertices, "
+                                  "which is the length of the group index and weight arrays "
+                                  "``vertex_group_data_get`` returns");
+  parm = RNA_def_int(func, "count", 0, 0, INT_MAX, "Count", "", 0, INT_MAX);
+  RNA_def_function_return(func, parm);
+
+  func = RNA_def_function(srna, "vertex_group_data_get", "rna_Mesh_vertex_group_data_get");
+  RNA_def_function_ui_description(
+      func,
+      "Read every vertex group weight in one call, in compressed sparse row form: ``offsets`` "
+      "has one entry per vertex plus a terminator, and slices the other two arrays");
+  parm = RNA_def_int_array(func,
+                           "offsets",
+                           1,
+                           nullptr,
+                           0,
+                           INT_MAX,
+                           "",
+                           "Start of each vertex's influences, plus a terminator",
+                           0,
+                           INT_MAX);
+  RNA_def_parameter_flags(parm, PROP_DYNAMIC, PARM_OUTPUT);
+  parm = RNA_def_int_array(func,
+                           "group_indices",
+                           1,
+                           nullptr,
+                           0,
+                           INT_MAX,
+                           "",
+                           "Vertex group index of each influence",
+                           0,
+                           INT_MAX);
+  RNA_def_parameter_flags(parm, PROP_DYNAMIC, PARM_OUTPUT);
+  parm = RNA_def_float_array(
+      func, "weights", 1, nullptr, 0.0f, 1.0f, "", "Weight of each influence", 0.0f, 1.0f);
+  RNA_def_parameter_flags(parm, PROP_DYNAMIC, PARM_OUTPUT);
+
+  func = RNA_def_function(srna, "vertex_group_data_set", "rna_Mesh_vertex_group_data_set");
+  RNA_def_function_ui_description(
+      func,
+      "Replace every vertex group weight in one call, in the same compressed sparse row form "
+      "``vertex_group_data_get`` returns. Vertices whose run is empty are cleared. The vertex "
+      "groups themselves must already exist");
+  RNA_def_function_flag(func, FUNC_USE_REPORTS);
+  parm = RNA_def_int_array(func,
+                           "offsets",
+                           1,
+                           nullptr,
+                           0,
+                           INT_MAX,
+                           "",
+                           "Start of each vertex's influences, plus a terminator",
+                           0,
+                           INT_MAX);
+  RNA_def_parameter_flags(parm, PROP_DYNAMIC, PARM_REQUIRED);
+  parm = RNA_def_int_array(func,
+                           "group_indices",
+                           1,
+                           nullptr,
+                           0,
+                           INT_MAX,
+                           "",
+                           "Vertex group index of each influence",
+                           0,
+                           INT_MAX);
+  RNA_def_parameter_flags(parm, PROP_DYNAMIC, PARM_REQUIRED);
+  parm = RNA_def_float_array(
+      func, "weights", 1, nullptr, 0.0f, 1.0f, "", "Weight of each influence", 0.0f, 1.0f);
   RNA_def_parameter_flags(parm, PROP_DYNAMIC, PARM_REQUIRED);
 
   func = RNA_def_function(srna, "update", "rna_Mesh_update");
