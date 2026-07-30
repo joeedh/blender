@@ -220,7 +220,7 @@ bool multiresModifier_maskFromVertValues(Depsgraph *depsgraph,
  * Read `object`'s multires paint mask into top-level per-subdivided-vertex
  * values (the read twin of #multiresModifier_maskFromVertValues; grids are
  * sampled at their own stored level). Returns a MEM-allocated array of
- * `*r_values_num` floats (all zero when no mask layer exists — reported via
+ * `*r_values_num` floats (all zero when no mask layer exists, reported via
  * `r_has_mask`); null on failure. Caller frees.
  */
 float *multiresModifier_maskToVertValues(Depsgraph *depsgraph,
@@ -228,6 +228,24 @@ float *multiresModifier_maskToVertValues(Depsgraph *depsgraph,
                                          Object *object,
                                          int *r_values_num,
                                          bool *r_has_mask);
+
+/**
+ * The grid<->vertex correspondence behind the two exchanges above, as data: for
+ * every top-level grid sample in #CD_MDISPS order (`grid * grid_size^2 + y *
+ * grid_size + x`, grids in loop order), the subdivided-mesh vertex index it
+ * coincides with. Adjacent grids repeat a vertex index at their shared
+ * boundary; `-1` marks an unvisited sample.
+ *
+ * Lets an external subdivision engine pair its own samples with Blender's
+ * exactly, and convert any number of per-sample channels without a separate
+ * round trip for each. Returns a MEM-allocated array of `*r_indices_num` ints
+ * (with `*r_grid_size` the per-grid side); null on failure. Caller frees.
+ */
+int *multiresModifier_gridVertIndices(Depsgraph *depsgraph,
+                                      MultiresModifierData *mmd,
+                                      Object *object,
+                                      int *r_indices_num,
+                                      int *r_grid_size);
 
 /* Subdivide multi-res displacement once. */
 

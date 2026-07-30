@@ -268,6 +268,31 @@ float *multiresModifier_maskToVertValues(Depsgraph *depsgraph,
   return values;
 }
 
+int *multiresModifier_gridVertIndices(Depsgraph *depsgraph,
+                                      MultiresModifierData *mmd,
+                                      Object *object,
+                                      int *r_indices_num,
+                                      int *r_grid_size)
+{
+  MultiresModifierData highest_mmd = dna::shallow_copy(*mmd);
+  highest_mmd.sculptlvl = highest_mmd.totlvl;
+  highest_mmd.lvl = highest_mmd.totlvl;
+  highest_mmd.renderlvl = highest_mmd.totlvl;
+
+  *r_indices_num = 0;
+  *r_grid_size = 0;
+  MultiresReshapeContext reshape_context;
+  if (!multires_reshape_context_create_from_object(
+          &reshape_context, depsgraph, object, &highest_mmd))
+  {
+    return nullptr;
+  }
+  *r_grid_size = reshape_context.top.grid_size;
+  int *indices = multires_reshape_read_grid_vert_indices(&reshape_context, r_indices_num);
+  multires_reshape_context_free(&reshape_context);
+  return indices;
+}
+
 bool multiresModifier_reshapeFromVertPositions(Depsgraph *depsgraph,
                                                MultiresModifierData *mmd,
                                                Object *object,

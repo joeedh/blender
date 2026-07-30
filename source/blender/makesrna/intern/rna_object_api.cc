@@ -6,6 +6,7 @@
  * \ingroup RNA
  */
 
+#include <climits>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
@@ -499,6 +500,29 @@ static void rna_Object_multires_mask_to_vert_values(Object *object,
   *r_values = multiresModifier_maskToVertValues(depsgraph, mmd, object, r_values_num, r_has_mask);
   if (*r_values == nullptr) {
     BKE_report(reports, RPT_ERROR, "Multires mask read failed");
+  }
+}
+
+static void rna_Object_multires_grid_vert_indices(Object *object,
+                                                  ReportList *reports,
+                                                  Depsgraph *depsgraph,
+                                                  int **r_indices,
+                                                  int *r_indices_num,
+                                                  int *r_grid_size)
+{
+  *r_indices = nullptr;
+  *r_indices_num = 0;
+  *r_grid_size = 0;
+  MultiresModifierData *mmd = reinterpret_cast<MultiresModifierData *>(
+      BKE_modifiers_findby_type(object, eModifierType_Multires));
+  if (mmd == nullptr) {
+    BKE_report(reports, RPT_ERROR, "Object has no multires modifier");
+    return;
+  }
+  *r_indices = multiresModifier_gridVertIndices(
+      depsgraph, mmd, object, r_indices_num, r_grid_size);
+  if (*r_indices == nullptr) {
+    BKE_report(reports, RPT_ERROR, "Multires grid vertex index read failed");
   }
 }
 
@@ -1178,6 +1202,33 @@ void RNA_api_object(StructRNA *srna)
   RNA_def_parameter_flags(parm, PROP_DYNAMIC, PARM_OUTPUT);
   parm = RNA_def_boolean(
       func, "has_mask", false, "Has Mask", "Whether the object had a mask layer");
+  RNA_def_parameter_flags(parm, PropertyFlag(0), PARM_OUTPUT);
+
+  func = RNA_def_function(
+      srna, "multires_grid_vert_indices", "rna_Object_multires_grid_vert_indices");
+  RNA_def_function_ui_description(
+      func,
+      "Map every top-level multires grid sample to the subdivided-mesh vertex it coincides "
+      "with, in per-grid row-major order (grid * grid_size * grid_size + y * grid_size + x, "
+      "grids in loop order). Grids sharing a boundary repeat a vertex index; -1 marks an "
+      "unvisited sample");
+  RNA_def_function_flag(func, FUNC_USE_REPORTS);
+  parm = RNA_def_pointer(
+      func, "depsgraph", "Depsgraph", "", "Depsgraph to get evaluated data from");
+  RNA_def_parameter_flags(parm, PropertyFlag(0), PARM_REQUIRED);
+  parm = RNA_def_int_array(func,
+                           "vert_indices",
+                           1,
+                           nullptr,
+                           INT_MIN,
+                           INT_MAX,
+                           "",
+                           "Per-grid-sample subdivided-mesh vertex indices",
+                           INT_MIN,
+                           INT_MAX);
+  RNA_def_parameter_flags(parm, PROP_DYNAMIC, PARM_OUTPUT);
+  parm = RNA_def_int(
+      func, "grid_size", 0, 0, INT_MAX, "Grid Size", "Samples per grid side", 0, INT_MAX);
   RNA_def_parameter_flags(parm, PropertyFlag(0), PARM_OUTPUT);
 
   /* Crazy-space access. */

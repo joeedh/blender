@@ -319,6 +319,19 @@ bool multires_reshape_assign_mask_from_vert_values(const MultiresReshapeContext 
 float *multires_reshape_read_mask_to_vert_values(const MultiresReshapeContext *reshape_context,
                                                  int *r_values_num);
 
+/**
+ * The grid<->vertex correspondence itself: for every top-level grid sample, in
+ * MDisps order (`grid * grid_size^2 + y * grid_size + x`, grids in loop order),
+ * the index of the subdivided-mesh vertex that sample coincides with. Boundary
+ * samples of adjacent grids therefore repeat a vertex index. `-1` marks a
+ * sample the subdivision walk never visited.
+ *
+ * The returned array is MEM-allocated and `*r_indices_num` long; null on walk
+ * failure. Caller frees.
+ */
+int *multires_reshape_read_grid_vert_indices(const MultiresReshapeContext *reshape_context,
+                                             int *r_indices_num);
+
 /** \} */
 
 /* -------------------------------------------------------------------- */
