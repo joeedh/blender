@@ -3,8 +3,10 @@
 Working notes for the custom object mode core API on this branch. See
 [../CLAUDE.md](../CLAUDE.md) for the overview.
 
-Scope: **only** the engine-agnostic mode API (registration, lifecycle, undo,
-external draw, multires reshape). Sculpt-engine and addon notes live in the
+Scope: **only** the engine-agnostic changes this branch carries — the mode API
+proper (registration, lifecycle, undo, external draw) plus the standalone
+helpers it grew alongside (multires reshape, bulk vertex-group access,
+`.always_enable`). Sculpt-engine and addon notes live in the
 `sculptcore-blender-addon` repo's own `claudeMemory`, not here.
 
 ## Structure
