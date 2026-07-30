@@ -58,6 +58,17 @@ Core (C/C++):
   `blenkernel/intern/multires_reshape_vertcos.cc` + `multires_reshape.cc`.
   Engine-agnostic helpers to push a flat vertex-coordinate array back onto a
   multires grid (used by the addon's multires import/export, useful on its own).
+- **Multires Python surface** — `makesrna/intern/rna_object_api.cc`:
+  `Object.multires_grid_vert_indices(depsgraph)` (`:506`) returns, per grid
+  sample, which subdivided vertex it is. Every reshape walk computes that
+  pairing internally and none exposed it, so the only route to a grid↔vertex
+  map was proximity — and proximity is not identity (sample spacing halves per
+  level, so any base discrepancy at a crease or extraordinary vertex swaps
+  adjacent samples). `Object.multires_mask_to_vert_values` /
+  `multires_mask_from_vert_values` (`:465`, `:484`) do the same for
+  `CD_GRID_PAINT_MASK` over `multiresModifier_maskToVertValues`/`_from`.
+  Engine-agnostic; the addon uses all three to exchange displacement and the
+  sculpt mask with a mesh it holds in its own representation.
 - **Bulk vertex-group weight access** — `makesrna/intern/rna_mesh_api.cc`:
   `Mesh.vertex_group_element_count()`, `vertex_group_data_get()`,
   `vertex_group_data_set()`. Read or replace a mesh's entire `MDeformVert`
