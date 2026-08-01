@@ -3202,6 +3202,15 @@ static void rna_def_mesh(BlenderRNA *brna)
   /* Attributes */
   rna_def_attributes_common(srna, AttributeOwnerType::Mesh);
 
+  /* Face sets */
+  prop = RNA_def_property(srna, "face_sets_color_default", PROP_INT, PROP_NONE);
+  RNA_def_property_int_sdna(prop, nullptr, "face_sets_color_default");
+  RNA_def_property_ui_text(prop,
+                           "Default Face Set",
+                           "The face set id drawn without a color in the face sets overlay");
+  RNA_def_property_update(prop, 0, "rna_Mesh_update_draw");
+  RNA_def_property_clear_flag(prop, PROP_ANIMATABLE);
+
   /* Remesh */
   prop = RNA_def_property(srna, "remesh_voxel_size", PROP_FLOAT, PROP_DISTANCE);
   /* NOTE: allow zero (which skips computation), to avoid zero clamping
