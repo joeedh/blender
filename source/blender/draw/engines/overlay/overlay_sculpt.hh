@@ -11,6 +11,7 @@
 #include "BKE_attribute.hh"
 #include "BKE_curves.hh"
 #include "BKE_mesh.hh"
+#include "BKE_object_draw_provider.hh"
 #include "BKE_paint.hh"
 #include "BKE_paint_bvh.hh"
 #include "BKE_subdiv_ccg.hh"
@@ -20,6 +21,7 @@
 #include "bmesh.hh"
 
 #include "draw_cache_impl.hh"
+#include "draw_external.hh"
 #include "draw_sculpt.hh"
 
 #include "overlay_base.hh"
@@ -51,9 +53,13 @@ class Sculpts : Overlay {
     show_face_set_ = state.show_sculpt_face_sets();
     show_mask_ = state.show_sculpt_mask();
 
+    /* OB_MODE_CUSTOM: a custom sculpt mode drawing through the external
+     * provider gets the same mask/face-set overlay — its batches carry the
+     * msk/fset streams directly (see draw_external.cc). Objects without a
+     * provider fall out in mesh_sync. */
     enabled_ = state.is_space_v3d() && !state.is_wire() && !res.is_selection() &&
                !state.is_depth_only_drawing &&
-               ELEM(state.object_mode, OB_MODE_SCULPT_CURVES, OB_MODE_SCULPT) &&
+               ELEM(state.object_mode, OB_MODE_SCULPT_CURVES, OB_MODE_SCULPT, OB_MODE_CUSTOM) &&
                (show_curves_cage_ || show_face_set_ || show_mask_);
 
     if (!enabled_) {
@@ -162,6 +168,16 @@ class Sculpts : Overlay {
   {
     if (!show_face_set_ && !show_mask_) {
       /* Nothing to display. */
+      return;
+    }
+
+    /* Custom modes draw through the external provider; their batches carry
+     * the msk/fset vertex streams, so no SculptSession/pbvh is involved. */
+    if (BKE_object_use_external_draw(ob_ref.object, state.rv3d) && !state.is_image_render) {
+      ResourceHandleRange handle = manager.unique_handle(ob_ref);
+      for (SculptBatch &batch : external_batches_get(ob_ref.object, SCULPT_BATCH_DEFAULT)) {
+        mesh_ps_->draw(batch.batch, handle);
+      }
       return;
     }
 

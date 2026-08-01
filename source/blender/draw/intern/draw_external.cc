@@ -56,6 +56,20 @@ static const GPUVertFormat &normal_format()
   return format;
 }
 
+static const GPUVertFormat &mask_format()
+{
+  static const GPUVertFormat format = GPU_vertformat_from_attribute("msk",
+                                                                    gpu::VertAttrType::SFLOAT_32);
+  return format;
+}
+
+static const GPUVertFormat &fset_format()
+{
+  static const GPUVertFormat format = GPU_vertformat_from_attribute(
+      "fset", gpu::VertAttrType::SFLOAT_32_32_32);
+  return format;
+}
+
 static short4 normal_float_to_short(const float3 &value)
 {
   short3 result;
@@ -121,10 +135,14 @@ struct NodeCache {
   gpu::VertBufPtr nor;
   gpu::VertBufPtr col;
   gpu::VertBufPtr uv;
+  gpu::VertBufPtr msk;
+  gpu::VertBufPtr fset;
   gpu::Batch *batch = nullptr;
   int verts_num = 0;
   bool has_color = false;
   bool has_uv = false;
+  bool has_mask = false;
+  bool has_fset = false;
 
   ~NodeCache()
   {
@@ -141,10 +159,14 @@ struct NodeCache {
         nor(std::move(other.nor)),
         col(std::move(other.col)),
         uv(std::move(other.uv)),
+        msk(std::move(other.msk)),
+        fset(std::move(other.fset)),
         batch(other.batch),
         verts_num(other.verts_num),
         has_color(other.has_color),
-        has_uv(other.has_uv)
+        has_uv(other.has_uv),
+        has_mask(other.has_mask),
+        has_fset(other.has_fset)
   {
     other.batch = nullptr;
   }
@@ -158,10 +180,14 @@ struct NodeCache {
       nor = std::move(other.nor);
       col = std::move(other.col);
       uv = std::move(other.uv);
+      msk = std::move(other.msk);
+      fset = std::move(other.fset);
       batch = other.batch;
       verts_num = other.verts_num;
       has_color = other.has_color;
       has_uv = other.has_uv;
+      has_mask = other.has_mask;
+      has_fset = other.has_fset;
       other.batch = nullptr;
     }
     return *this;
@@ -203,11 +229,19 @@ static void node_upload(NodeCache &cache,
                         const bool want_uv,
                         const GPUVertFormat *uv_format)
 {
-  /* The provider exposes attrs in a fixed slot order: color@0, uv@1. */
+  /* The provider exposes attrs in a fixed slot order: color@0, uv@1, mask@2,
+   * fset@3 (the legacy single-stream layout only fills slot 0, so the higher
+   * probes read null there). Mask and face-set streams feed the sculpt-mask
+   * overlay pass and are carried whenever the provider fills them — unlike
+   * color/UV they are not gated on the Mesh having a layer, because the
+   * engine-side column (the live brush target) is the source of truth. */
   const bool have_color_src = want_color && node.attrs != nullptr && node.attrs[0] != nullptr;
   const bool have_uv_src = want_uv && node.attrs != nullptr && node.attrs[1] != nullptr;
+  const bool have_mask_src = node.attrs != nullptr && node.attrs[2] != nullptr;
+  const bool have_fset_src = node.attrs != nullptr && node.attrs[3] != nullptr;
   const bool realloc = cache.batch == nullptr || cache.verts_num != node.verts_num ||
                        cache.has_color != have_color_src || cache.has_uv != have_uv_src ||
+                       cache.has_mask != have_mask_src || cache.has_fset != have_fset_src ||
                        (node.update_flags & EXTERNAL_DRAW_UPDATE_TOPOLOGY) != 0;
   const bool upload = realloc || (node.update_flags & EXTERNAL_DRAW_UPDATE_DATA) != 0;
   if (!upload) {
@@ -242,9 +276,22 @@ static void node_upload(NodeCache &cache,
     else {
       cache.uv.reset();
     }
+    /* Always allocated: the sculpt-mask overlay pass draws every external
+     * batch with a shader that reads both streams, and a missing vertex
+     * attribute binds as zeros — for fset (multiplied in) that would render
+     * the object black. A provider that fills no mask/fset slot gets the
+     * neutral constants instead (mask 0, face-set white). */
+    cache.msk = gpu::VertBufPtr(
+        GPU_vertbuf_create_with_format_ex(mask_format(), GPU_USAGE_DYNAMIC));
+    GPU_vertbuf_data_alloc(*cache.msk, node.verts_num);
+    cache.fset = gpu::VertBufPtr(
+        GPU_vertbuf_create_with_format_ex(fset_format(), GPU_USAGE_DYNAMIC));
+    GPU_vertbuf_data_alloc(*cache.fset, node.verts_num);
     cache.verts_num = node.verts_num;
     cache.has_color = have_color_src;
     cache.has_uv = have_uv_src;
+    cache.has_mask = have_mask_src;
+    cache.has_fset = have_fset_src;
   }
 
   MutableSpan<float3> positions = cache.pos->data<float3>();
@@ -281,6 +328,24 @@ static void node_upload(NodeCache &cache,
     MutableSpan<float2> uvs = cache.uv->data<float2>();
     uvs.copy_from(Span<float2>(static_cast<const float2 *>(node.attrs[1]), node.verts_num));
   }
+  {
+    /* Engine sculpt-mask stream (float, slot 2); zeros when unfilled. */
+    MutableSpan<float> masks = cache.msk->data<float>();
+    if (have_mask_src) {
+      masks.copy_from(Span<float>(static_cast<const float *>(node.attrs[2]), node.verts_num));
+    }
+    else {
+      masks.fill(0.0f);
+    }
+    /* Engine face-set color stream (float3, slot 3); white when unfilled. */
+    MutableSpan<float3> fsets = cache.fset->data<float3>();
+    if (have_fset_src) {
+      fsets.copy_from(Span<float3>(static_cast<const float3 *>(node.attrs[3]), node.verts_num));
+    }
+    else {
+      fsets.fill(float3(1.0f));
+    }
+  }
 
   /* Flag the refilled buffers and force the upload now (like #draw_pbvh's
    * node updates): the GL backend only processes the dirty flag on a bind,
@@ -298,6 +363,14 @@ static void node_upload(NodeCache &cache,
     GPU_vertbuf_tag_dirty(cache.uv.get());
     GPU_vertbuf_use(cache.uv.get());
   }
+  if (cache.msk) {
+    GPU_vertbuf_tag_dirty(cache.msk.get());
+    GPU_vertbuf_use(cache.msk.get());
+  }
+  if (cache.fset) {
+    GPU_vertbuf_tag_dirty(cache.fset.get());
+    GPU_vertbuf_use(cache.fset.get());
+  }
 
   if (realloc) {
     cache.batch = GPU_batch_create(GPU_PRIM_TRIS, nullptr, nullptr);
@@ -308,6 +381,12 @@ static void node_upload(NodeCache &cache,
     }
     if (cache.uv) {
       GPU_batch_vertbuf_add(cache.batch, cache.uv.get(), false);
+    }
+    if (cache.msk) {
+      GPU_batch_vertbuf_add(cache.batch, cache.msk.get(), false);
+    }
+    if (cache.fset) {
+      GPU_batch_vertbuf_add(cache.batch, cache.fset.get(), false);
     }
   }
 }
@@ -337,9 +416,13 @@ Vector<SculptBatch> external_batches_get(const Object *ob, SculptBatchFeature /*
   GPUVertFormat uv_format = {};
   const bool want_color = color_vertex_format(ob, color_format);
   const bool want_uv = uv_vertex_format(ob, uv_format);
-  const char *attr_names[2] = {"color", "uv"};
-  const int attrs_num = want_uv ? 2 : (want_color ? 1 : 0);
-  const ExternalDrawAttrRequest request = {attrs_num, attrs_num ? attr_names : nullptr};
+  /* Always request the full four-slot block: the provider sizes every node's
+   * attribute-pointer block to `attrs_num`, and node_upload probes mask@2 and
+   * fset@3 unconditionally — a narrower request would make those probes read
+   * off the end of the block on a legacy (single-stream) tree. Slots the tree
+   * does not fill come back null, which is a defined "absent". */
+  const char *attr_names[4] = {"color", "uv", "msk", "fset"};
+  const ExternalDrawAttrRequest request = {4, attr_names};
 
   const Object *ob_orig = DEG_get_original(ob);
   const unsigned int object_key = ob_orig->id.session_uid;
