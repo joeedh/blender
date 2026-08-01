@@ -8,6 +8,8 @@
  * \ingroup bke
  */
 
+#include <string>
+
 #include "BLI_index_mask_fwd.hh"
 #include "BLI_math_matrix_types.hh"
 #include "BLI_offset_indices.hh"
@@ -290,6 +292,25 @@ void mesh_set_custom_normals_normalized(Mesh &mesh, MutableSpan<float3> corner_n
  */
 void mesh_set_custom_normals_from_verts(Mesh &mesh, MutableSpan<float3> vert_normals);
 void mesh_set_custom_normals_from_verts_normalized(Mesh &mesh, MutableSpan<float3> vert_normals);
+
+/**
+ * Replace the mesh's topology wholesale, in place. Unlike
+ * `clear_geometry()` + per-domain `add()`, every attribute layer
+ * *declaration* (name/type/domain/active designations), the vertex-group
+ * name table, the animation data and the shape-key blocks survive — only the
+ * per-element values reset to their type defaults, for the caller to fill.
+ * Edges beyond `edges` (which may be empty) are derived from the faces and
+ * `.corner_edge` is rebuilt (#mesh_calc_edges). Shape-key blocks are resized
+ * to the new vertex count and reset to the new base shape (old key data
+ * indexes the old vertices); callers carrying real key data write it back
+ * afterwards. Returns false (mesh untouched) on malformed input.
+ */
+bool mesh_set_topology(Mesh &mesh,
+                       Span<float3> positions,
+                       Span<int> corner_verts,
+                       Span<int> face_offsets,
+                       Span<int2> edges,
+                       std::string *r_error);
 
 /**
  * Encode per-corner directions into the `custom_normal` short2 corner layer

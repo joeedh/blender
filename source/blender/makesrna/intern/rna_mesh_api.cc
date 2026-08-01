@@ -204,6 +204,41 @@ static void rna_Mesh_custom_normals_encode(Mesh *mesh,
   DEG_id_tag_update(&mesh->id, 0);
 }
 
+static void rna_Mesh_set_topology(Mesh *mesh,
+                                  ReportList *reports,
+                                  const float *positions,
+                                  int positions_num,
+                                  const int *corner_verts,
+                                  int corner_verts_num,
+                                  const int *face_offsets,
+                                  int face_offsets_num,
+                                  const int *edge_verts,
+                                  int edge_verts_num)
+{
+  if (positions_num % 3 != 0) {
+    BKE_report(reports, RPT_ERROR, "positions length must be a multiple of 3");
+    return;
+  }
+  if (edge_verts_num % 2 != 0) {
+    BKE_report(reports, RPT_ERROR, "edge_verts length must be a multiple of 2");
+    return;
+  }
+  std::string error;
+  if (!bke::mesh_set_topology(
+          *mesh,
+          {reinterpret_cast<const blender::float3 *>(positions), positions_num / 3},
+          {corner_verts, corner_verts_num},
+          {face_offsets, face_offsets_num},
+          {reinterpret_cast<const blender::int2 *>(edge_verts), edge_verts_num / 2},
+          &error))
+  {
+    BKE_report(reports, RPT_ERROR, error.c_str());
+    return;
+  }
+
+  DEG_id_tag_update(&mesh->id, ID_RECALC_GEOMETRY);
+}
+
 static void rna_Mesh_skin_vertices_ensure(Mesh *mesh)
 {
   BKE_mesh_ensure_skin_customdata(mesh);
@@ -519,6 +554,53 @@ void RNA_api_mesh(StructRNA *srna)
   /* TODO: see how array size of 0 works, this shouldn't be used. */
   parm = RNA_def_float_array(func, "normals", 1, nullptr, -1.0f, 1.0f, "", "Normals", 0.0f, 0.0f);
   RNA_def_property_multi_array(parm, 2, normals_array_dim);
+  RNA_def_parameter_flags(parm, PROP_DYNAMIC, PARM_REQUIRED);
+
+  func = RNA_def_function(srna, "set_topology", "rna_Mesh_set_topology");
+  RNA_def_function_ui_description(
+      func,
+      "Replace the mesh topology wholesale, in place: unlike clear_geometry() plus per-domain "
+      "add(), attribute layer declarations, active/default designations, vertex group names, "
+      "animation data and shape key blocks all survive — per-element values reset to their type "
+      "defaults for the caller to refill. Edges beyond ``edge_verts`` (e.g. wire edges) are "
+      "derived from the faces; shape key blocks are resized and reset to the new base shape");
+  RNA_def_function_flag(func, FUNC_USE_REPORTS);
+  parm = RNA_def_float_array(
+      func, "positions", 1, nullptr, -FLT_MAX, FLT_MAX, "", "Vertex positions (flat xyz)", -FLT_MAX, FLT_MAX);
+  RNA_def_parameter_flags(parm, PROP_DYNAMIC, PARM_REQUIRED);
+  parm = RNA_def_int_array(func,
+                           "corner_verts",
+                           1,
+                           nullptr,
+                           0,
+                           INT_MAX,
+                           "",
+                           "Vertex index per face corner",
+                           0,
+                           INT_MAX);
+  RNA_def_parameter_flags(parm, PROP_DYNAMIC, PARM_REQUIRED);
+  parm = RNA_def_int_array(func,
+                           "face_offsets",
+                           1,
+                           nullptr,
+                           0,
+                           INT_MAX,
+                           "",
+                           "Face corner offsets (faces + 1 entries, first 0, last the corner count)",
+                           0,
+                           INT_MAX);
+  RNA_def_parameter_flags(parm, PROP_DYNAMIC, PARM_REQUIRED);
+  parm = RNA_def_int_array(func,
+                           "edge_verts",
+                           1,
+                           nullptr,
+                           0,
+                           INT_MAX,
+                           "",
+                           "Explicit edges as flat vertex-index pairs (wire edges; face edges are "
+                           "derived automatically)",
+                           0,
+                           INT_MAX);
   RNA_def_parameter_flags(parm, PROP_DYNAMIC, PARM_REQUIRED);
 
   func = RNA_def_function(srna, "skin_vertices_ensure", "rna_Mesh_skin_vertices_ensure");
