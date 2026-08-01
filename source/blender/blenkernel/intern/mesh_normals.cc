@@ -1708,6 +1708,73 @@ void mesh_set_custom_normals_from_verts(Mesh &mesh, MutableSpan<float3> vert_nor
   mesh::mesh_set_custom_normals(mesh, vert_normals, true);
 }
 
+void mesh_encode_custom_normals(Mesh &mesh, MutableSpan<float3> corner_normals)
+{
+  /* Unlike #mesh_set_custom_normals this encodes against the mesh's *current*
+   * sharpness: one #mesh::normals_calc_corners pass builds the fan spaces, and
+   * no fan-divergence scan runs, so `sharp_edge` is never written. Meant for
+   * callers that already control sharpness themselves and need the encode to
+   * be repeatable (e.g. per-flush round-tripping) without accumulating sharp
+   * edges the way the divergence scan does. */
+  normalize_vecs(corner_normals);
+
+  MutableAttributeAccessor attributes = mesh.attributes_for_write();
+  SpanAttributeWriter custom_normals = attributes.lookup_or_add_for_write_span<short2>(
+      "custom_normal", AttrDomain::Corner);
+  if (!custom_normals) {
+    return;
+  }
+  const VArraySpan sharp_edges = *attributes.lookup<bool>("sharp_edge", AttrDomain::Edge);
+  const VArraySpan sharp_faces = *attributes.lookup<bool>("sharp_face", AttrDomain::Face);
+
+  mesh::CornerNormalSpaceArray fan_spaces;
+  fan_spaces.create_corners_by_space = true;
+  Array<float3> auto_normals(mesh.corners_num);
+  mesh::normals_calc_corners(mesh.vert_positions(),
+                             mesh.faces(),
+                             mesh.corner_verts(),
+                             mesh.corner_edges(),
+                             mesh.vert_to_face_map(),
+                             mesh.face_normals_true(),
+                             sharp_edges,
+                             sharp_faces,
+                             {},
+                             &fan_spaces,
+                             auto_normals);
+
+  MutableSpan<short2> clnors = custom_normals.span;
+  BitVector<> done_corners(mesh.corners_num, false);
+  for (const int i : IndexRange(mesh.corners_num)) {
+    if (done_corners[i]) {
+      continue;
+    }
+    const int space_index = fan_spaces.corner_space_indices[i];
+    if (space_index == -1) {
+      continue;
+    }
+    const Span<int> fan_corners = fan_spaces.corners_by_space[space_index];
+    if (fan_corners.size() < 2) {
+      clnors[i] = mesh::corner_space_custom_normal_to_data(fan_spaces.spaces[space_index],
+                                                           corner_normals[i]);
+      done_corners[i].set();
+      continue;
+    }
+    /* Average over the fan, as #mesh_normals_corner_custom_set does: tiny
+     * differences in the input directions turn into large differences in the
+     * encoded 2D factors. */
+    float3 average(0.0f);
+    for (const int corner : fan_corners) {
+      average += corner_normals[corner];
+      done_corners[corner].set();
+    }
+    average *= 1.0f / float(fan_corners.size());
+    const short2 data = mesh::corner_space_custom_normal_to_data(
+        fan_spaces.spaces[space_index], average);
+    clnors.fill_indices(fan_corners, data);
+  }
+  custom_normals.finish();
+}
+
 void mesh_set_custom_normals_from_verts_normalized(Mesh &mesh, MutableSpan<float3> vert_normals)
 {
   mesh::mesh_set_custom_normals(mesh, vert_normals, true);

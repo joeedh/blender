@@ -183,6 +183,33 @@ static void rna_Mesh_normals_split_custom_set_from_vertices(Mesh *mesh,
   DEG_id_tag_update(&mesh->id, 0);
 }
 
+static void rna_Mesh_custom_normals_encode(Mesh *mesh,
+                                           ReportList *reports,
+                                           const float *normals,
+                                           int normals_num)
+{
+  float3 *corner_normals = reinterpret_cast<float3 *>(const_cast<float *>(normals));
+  const int numloops = mesh->corners_num;
+  if (normals_num != numloops * 3) {
+    BKE_reportf(reports,
+                RPT_ERROR,
+                "Number of custom normals is not number of loops (%f / %d)",
+                float(normals_num) / 3.0f,
+                numloops);
+    return;
+  }
+
+  bke::mesh_encode_custom_normals(*mesh, {corner_normals, numloops});
+
+  DEG_id_tag_update(&mesh->id, 0);
+}
+
+static void rna_Mesh_skin_vertices_ensure(Mesh *mesh)
+{
+  BKE_mesh_ensure_skin_customdata(mesh);
+  DEG_id_tag_update(&mesh->id, 0);
+}
+
 static int rna_Mesh_vertex_group_element_count(Mesh *mesh)
 {
   int total = 0;
@@ -490,6 +517,23 @@ void RNA_api_mesh(StructRNA *srna)
                                   "(use zero-vectors to keep auto ones)");
   RNA_def_function_flag(func, FUNC_USE_REPORTS);
   /* TODO: see how array size of 0 works, this shouldn't be used. */
+  parm = RNA_def_float_array(func, "normals", 1, nullptr, -1.0f, 1.0f, "", "Normals", 0.0f, 0.0f);
+  RNA_def_property_multi_array(parm, 2, normals_array_dim);
+  RNA_def_parameter_flags(parm, PROP_DYNAMIC, PARM_REQUIRED);
+
+  func = RNA_def_function(srna, "skin_vertices_ensure", "rna_Mesh_skin_vertices_ensure");
+  RNA_def_function_ui_description(func,
+                                  "Create the skin vertex layer (``skin_vertices``) if the mesh "
+                                  "does not have one, with the default root/radius setup");
+
+  func = RNA_def_function(srna, "custom_normals_encode", "rna_Mesh_custom_normals_encode");
+  RNA_def_function_ui_description(
+      func,
+      "Encode per-corner directions into the encoded (short2) custom normal layer against the "
+      "mesh's current sharpness, without the sharp-edge divergence scan "
+      "``normals_split_custom_set`` runs — sharpness is never modified, so repeated calls "
+      "do not accumulate sharp edges");
+  RNA_def_function_flag(func, FUNC_USE_REPORTS);
   parm = RNA_def_float_array(func, "normals", 1, nullptr, -1.0f, 1.0f, "", "Normals", 0.0f, 0.0f);
   RNA_def_property_multi_array(parm, 2, normals_array_dim);
   RNA_def_parameter_flags(parm, PROP_DYNAMIC, PARM_REQUIRED);

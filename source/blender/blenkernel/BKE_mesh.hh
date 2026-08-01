@@ -291,6 +291,18 @@ void mesh_set_custom_normals_normalized(Mesh &mesh, MutableSpan<float3> corner_n
 void mesh_set_custom_normals_from_verts(Mesh &mesh, MutableSpan<float3> vert_normals);
 void mesh_set_custom_normals_from_verts_normalized(Mesh &mesh, MutableSpan<float3> vert_normals);
 
+/**
+ * Encode per-corner directions into the `custom_normal` short2 corner layer
+ * against the mesh's *current* sharpness: one #mesh::normals_calc_corners pass
+ * builds the fan spaces and no fan-divergence scan runs, so unlike
+ * #mesh_set_custom_normals this never writes `sharp_edge` and is safe to call
+ * repeatedly (an importer/bridge that owns its own sharpness).
+ *
+ * \param corner_normals: Is mutable because the directions are normalized in
+ * place before encoding.
+ */
+void mesh_encode_custom_normals(Mesh &mesh, MutableSpan<float3> corner_normals);
+
 /** \} */
 
 /* -------------------------------------------------------------------- */
