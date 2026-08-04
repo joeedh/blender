@@ -145,11 +145,45 @@ jobs:
       # selected per-OS via CC/CXX (gcc-14 on Linux, cl on Windows, AppleClang
       # default on macOS). Build in-workspace (`build/`) so the portable install
       # tree at `build/bin` is a clean upload path (no `..` outside the checkout).
+      #
+      # Optimization flags come from CMake's own RelWithDebInfo defaults, since
+      # Blender never sets a base itself — it only *appends* to
+      # `CMAKE_<LANG>_FLAGS_<CONFIG>` (`platform_win32.cmake:286`,
+      # `platform_unix.cmake:900`). gcc/AppleClang default to `-O2 -g -DNDEBUG`,
+      # which is what we want. MSVC defaults to `/Zi /O2 /Ob1 /DNDEBUG`, and
+      # `/Ob1` inlines only what is explicitly marked `inline` — a real cost in
+      # the templated sculpt/PBVH code, and a mismatch with the `-O2` full
+      # inlining the SculptCore engine DLL is built with, which would silently
+      # bias any native-vs-engine comparison made on a package. Ask for `/Ob2`
+      # and let Blender append its own `/MD /Zi`.
       - name: Configure
-        run: >
-          cmake -S . -B build -G Ninja
-          -DCMAKE_BUILD_TYPE=RelWithDebInfo
-          -DWITH_BUILDINFO=OFF
+        run: |
+          args=(-DCMAKE_BUILD_TYPE=RelWithDebInfo -DWITH_BUILDINFO=OFF)
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            args+=(-DCMAKE_C_FLAGS_RELWITHDEBINFO="/O2 /Ob2 /DNDEBUG"
+                   -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="/O2 /Ob2 /DNDEBUG")
+          fi
+          cmake -S . -B build -G Ninja "${args[@]}"
+
+      # Fail loudly if the build is about to be unoptimized. An empty
+      # `CMAKE_<LANG>_FLAGS_<CONFIG>` cache entry produces a Blender that is
+      # 2-5x slower at sculpting with asserts live, and it reads as an engine
+      # performance regression rather than as a build mistake — which is exactly
+      # how it was diagnosed (slowly) on a local build dir. The cache entry is
+      # the thing to check: Blender's `string(APPEND ...)` sets a normal
+      # variable that shadows it, so the cache still shows the base CMake chose.
+      - name: Verify optimization flags
+        run: |
+          for lang in C CXX; do
+            line=$(grep "^CMAKE_${lang}_FLAGS_RELWITHDEBINFO:STRING=" build/CMakeCache.txt)
+            echo "$line"
+            case "$line" in
+              *-O2*-DNDEBUG*|*-DNDEBUG*-O2*) ;;
+              *"/O2"*"/DNDEBUG"*|*"/DNDEBUG"*"/O2"*) ;;
+              *) echo "::error::${lang} RelWithDebInfo flags carry no optimization or no NDEBUG: ${line}"
+                 exit 1 ;;
+            esac
+          done
 
       - name: Build
         run: cmake --build build --parallel
