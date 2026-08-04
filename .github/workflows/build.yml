@@ -154,14 +154,20 @@ jobs:
       # `/Ob1` inlines only what is explicitly marked `inline` — a real cost in
       # the templated sculpt/PBVH code, and a mismatch with the `-O2` full
       # inlining the SculptCore engine DLL is built with, which would silently
-      # bias any native-vs-engine comparison made on a package. Ask for `/Ob2`
+      # bias any native-vs-engine comparison made on a package. Ask for `-Ob2`
       # and let Blender append its own `/MD /Zi`.
+      #
+      # Dash form, not slash form: these steps run under Git bash, whose MSYS
+      # runtime rewrites an argument that looks like a POSIX path, so a literal
+      # `/O2` reaches cmake as `C:/Program Files/Git/O2` and every compile then
+      # dies on `Cannot open source file: 'C:/Program'`. `cl` accepts `-` and
+      # `/` interchangeably and `-O2` is not path-like, so it survives untouched.
       - name: Configure
         run: |
           args=(-DCMAKE_BUILD_TYPE=RelWithDebInfo -DWITH_BUILDINFO=OFF)
           if [ "${{ runner.os }}" = "Windows" ]; then
-            args+=(-DCMAKE_C_FLAGS_RELWITHDEBINFO="/O2 /Ob2 /DNDEBUG"
-                   -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="/O2 /Ob2 /DNDEBUG")
+            args+=(-DCMAKE_C_FLAGS_RELWITHDEBINFO="-O2 -Ob2 -DNDEBUG"
+                   -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O2 -Ob2 -DNDEBUG")
           fi
           cmake -S . -B build -G Ninja "${args[@]}"
 
@@ -177,10 +183,23 @@ jobs:
           for lang in C CXX; do
             line=$(grep "^CMAKE_${lang}_FLAGS_RELWITHDEBINFO:STRING=" build/CMakeCache.txt)
             echo "$line"
-            case "$line" in
-              *-O2*-DNDEBUG*|*-DNDEBUG*-O2*) ;;
-              *"/O2"*"/DNDEBUG"*|*"/DNDEBUG"*"/O2"*) ;;
-              *) echo "::error::${lang} RelWithDebInfo flags carry no optimization or no NDEBUG: ${line}"
+            flags=${line#*=}
+            # A drive-letter path in a compiler flag means MSYS mangled the
+            # argument (`/O2` -> `C:/Program Files/Git/O2`). Check this first:
+            # the mangled value still *contains* `/O2`, so the optimization test
+            # below passes on it and the build dies much later, in the compiler.
+            case "$flags" in
+              *:/*) echo "::error::${lang} RelWithDebInfo flags look MSYS-mangled: ${flags}"
+                    exit 1 ;;
+            esac
+            case " $flags " in
+              *" -O2 "*|*" /O2 "*) ;;
+              *) echo "::error::${lang} RelWithDebInfo flags carry no optimization: ${flags}"
+                 exit 1 ;;
+            esac
+            case " $flags " in
+              *" -DNDEBUG "*|*" /DNDEBUG "*) ;;
+              *) echo "::error::${lang} RelWithDebInfo flags carry no NDEBUG: ${flags}"
                  exit 1 ;;
             esac
           done
