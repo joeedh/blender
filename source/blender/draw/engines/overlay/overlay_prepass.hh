@@ -200,7 +200,7 @@ class Prepass : Overlay {
 
   void external_sync(Manager &manager, const ObjectRef &ob_ref, Resources &res)
   {
-    ResourceHandleRange handle = manager.unique_handle(ob_ref);
+    ResourceHandleRange handle = manager.unique_handle_for_external(ob_ref);
 
     for (SculptBatch &batch : external_batches_get(ob_ref.object, SCULPT_BATCH_DEFAULT)) {
       select::ID select_id = res.select_id(ob_ref);

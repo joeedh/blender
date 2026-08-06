@@ -8,6 +8,9 @@
 
 #include "draw_external.hh"
 
+#include "DRW_engine.hh"
+
+#include "BLI_bounds_types.hh"
 #include "BLI_map.hh"
 #include "BLI_math_geom_c.hh"
 #include "BLI_math_matrix.hh"
@@ -202,14 +205,21 @@ struct NodeCache {
  * would silently draw another node's stale geometry). */
 struct ObjectCache {
   Map<uint32_t, NodeCache> nodes;
+  /* Union of every provider node AABB from the last sync (object space). This
+   * is the drawn geometry's real extent — the evaluated mesh's bounds are the
+   * undisplaced input, so culling by them clips sculpted displacement (see
+   * #external_draw_bounds_get / #Manager::unique_handle_for_external). */
+  std::optional<Bounds<float3>> bounds;
 };
 
-/* Keyed by original object pointer (the draw object is a depsgraph copy). Freed
- * on mode exit / provider unregister (external_draw_cache_free) and GPU
- * teardown (external_draw_cache_free_all). */
-static Map<const Object *, ObjectCache> &object_caches()
+/* Keyed by the original object's #ID.session_uid — the provider protocol's own
+ * key. Unlike an Object pointer it survives the reallocation of a memfile undo
+ * step, so undo re-uses the cache instead of orphaning every GPU buffer in it.
+ * Freed on mode exit (#DRW_external_draw_cache_free) and GPU teardown
+ * (external_draw_cache_free_all). */
+static Map<uint32_t, ObjectCache> &object_caches()
 {
-  static Map<const Object *, ObjectCache> caches;
+  static Map<uint32_t, ObjectCache> caches;
   return caches;
 }
 
@@ -433,7 +443,7 @@ Vector<SculptBatch> external_batches_get(const Object *ob, SculptBatchFeature /*
     return {};
   }
 
-  ObjectCache &cache = object_caches().lookup_or_add_default(ob_orig);
+  ObjectCache &cache = object_caches().lookup_or_add_default(object_key);
 
   /* Frustum planes in object space (transform by inverse(obmat); the transpose
    * inverse of a plane cancels the obmat inverse), matching draw_sculpt.cc. */
@@ -447,6 +457,7 @@ Vector<SculptBatch> external_batches_get(const Object *ob, SculptBatchFeature /*
 
   Vector<SculptBatch> result;
   Set<uint32_t> seen_ids;
+  std::optional<Bounds<float3>> bounds;
   for (const int i : IndexRange(nodes_num)) {
     const ExternalDrawNode &node = nodes[i];
     seen_ids.add(node.node_id);
@@ -455,6 +466,17 @@ Vector<SculptBatch> external_batches_get(const Object *ob, SculptBatchFeature /*
 
     if (node.verts_num == 0) {
       continue;
+    }
+    /* Bounds union over every drawable node, before the cull: the cached
+     * bounds feed next frame's culling, so an off-screen node still counts. */
+    const float3 node_min(node.bounds_min);
+    const float3 node_max(node.bounds_max);
+    if (bounds) {
+      bounds->min = math::min(bounds->min, node_min);
+      bounds->max = math::max(bounds->max, node_max);
+    }
+    else {
+      bounds = Bounds<float3>(node_min, node_max);
     }
     /* Frustum cull: skip a node whose AABB is fully outside any plane. */
     bool outside = false;
@@ -484,16 +506,24 @@ Vector<SculptBatch> external_batches_get(const Object *ob, SculptBatchFeature /*
    * of the same settled provider state returns the same id set, so no batch
    * returned by an earlier pass this frame refers to a pruned entry. */
   cache.nodes.remove_if([&](auto item) { return !seen_ids.contains(item.key); });
+  cache.bounds = bounds;
 
   provider->nodes_release(provider->user_data, object_key);
   return result;
 }
 
+std::optional<Bounds<float3>> external_draw_bounds_get(const Object *ob)
+{
+  const Object *ob_orig = DEG_get_original(ob);
+  const ObjectCache *cache = object_caches().lookup_ptr(ob_orig->id.session_uid);
+  return cache ? cache->bounds : std::nullopt;
+}
+
 Vector<SculptBatch> external_batches_per_material_get(const Object *ob,
                                                       Span<const GPUMaterial *> /*materials*/)
 {
-  /* v1: positions + normals only; per-node material_slot already groups the
-   * result. Generic per-material attributes land with the attribute stage. */
+  /* Per-node material_slot (from the provider's material_index) already groups
+   * the result. Generic per-material attributes land with the attribute stage. */
   return external_batches_get(ob, SCULPT_BATCH_DEFAULT);
 }
 
@@ -502,7 +532,7 @@ void external_draw_cache_free(const Object *ob)
   if (ob == nullptr) {
     return;
   }
-  object_caches().remove(DEG_get_original(ob));
+  object_caches().remove(DEG_get_original(ob)->id.session_uid);
 }
 
 void external_draw_cache_free_all()
@@ -513,3 +543,12 @@ void external_draw_cache_free_all()
 /** \} */
 
 }  // namespace blender::draw
+
+namespace blender {
+
+void DRW_external_draw_cache_free(Object *ob)
+{
+  draw::external_draw_cache_free(ob);
+}
+
+}  // namespace blender

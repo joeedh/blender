@@ -73,6 +73,8 @@
 #include "DEG_depsgraph.hh"
 #include "DEG_depsgraph_build.hh"
 
+#include "DRW_engine.hh"
+
 #include "ED_anim_api.hh"
 #include "ED_armature.hh"
 #include "ED_asset.hh"
@@ -2265,6 +2267,7 @@ static wmOperatorStatus object_custom_mode_toggle_exec(bContext *C, wmOperator *
     if (mt && mt->exit) {
       mt->exit(mt, C, ob);
     }
+    DRW_external_draw_cache_free(ob);
     /* `custom_mode_id` is kept as the restore target for re-entering. */
     ob->mode &= ~OB_MODE_CUSTOM;
   }

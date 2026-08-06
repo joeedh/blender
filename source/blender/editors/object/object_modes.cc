@@ -42,6 +42,8 @@
 #include "DEG_depsgraph.hh"
 #include "DEG_depsgraph_query.hh"
 
+#include "DRW_engine.hh"
+
 #include "ED_armature.hh"
 #include "ED_gpencil_legacy.hh"
 #include "ED_outliner.hh"
@@ -98,6 +100,7 @@ void custom_mode_exit_all(Main *bmain, ObjectModeType *mt)
       if (mt->exit) {
         mt->exit(mt, nullptr, &ob);
       }
+      DRW_external_draw_cache_free(&ob);
       ob.restore_mode = ob.mode;
       ob.mode &= ~OB_MODE_CUSTOM;
       DEG_id_tag_update_ex(bmain, &ob.id, ID_RECALC_SYNC_TO_EVAL);
@@ -399,6 +402,7 @@ static bool ed_object_mode_generic_exit_ex(
       /* No context on this path (workspace/object switches, file close). */
       mt->exit(mt, nullptr, ob);
     }
+    DRW_external_draw_cache_free(ob);
     /* `custom_mode_id` is kept: it doubles as the restore target for
      * re-entering the mode (and survives an unregistered idname, which is
      * sanitized at file load instead). */

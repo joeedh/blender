@@ -73,7 +73,7 @@ class ModeTransfer : Overlay {
       }
     }
     else if (BKE_object_use_external_draw(ob_ref.object, state.rv3d) && !state.is_image_render) {
-      ResourceHandleRange handle = manager.unique_handle(ob_ref);
+      ResourceHandleRange handle = manager.unique_handle_for_external(ob_ref);
       for (SculptBatch &batch : external_batches_get(ob_ref.object, SCULPT_BATCH_DEFAULT)) {
         ps_.draw(batch.batch, handle);
       }

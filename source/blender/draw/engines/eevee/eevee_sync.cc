@@ -283,9 +283,11 @@ bool SyncModule::sync_sculpt(const ObjectRef &ob_ref)
     return false;
   }
 
-  /* A custom mode has no PBVH tree, so its handle comes from the object bounds. */
-  ResourceHandleRange handle = pbvh_draw ? inst_.manager->unique_handle_for_sculpt(ob_ref) :
-                                           inst_.manager->unique_handle(ob_ref);
+  /* A custom mode has no PBVH tree; its handle bounds come from the synced
+   * provider-node bounds instead (the object bounds are the undisplaced cage). */
+  ResourceHandleRange handle = pbvh_draw ?
+                                   inst_.manager->unique_handle_for_sculpt(ob_ref) :
+                                   inst_.manager->unique_handle_for_external(ob_ref);
   ObjectHandle ob_handle = sync_object(ob_ref, handle);
 
   bool has_motion = false;

@@ -192,11 +192,12 @@ class Instance : public DrawEngine {
 
     if (is_object_data_visible) {
       if (object_state.sculpt_pbvh || object_state.external_draw) {
-        /* Sculpt derives the handle bounds from its PBVH tree; a custom mode has
-         * none, so external-draw objects take the regular object-bounds handle. */
+        /* Sculpt derives the handle bounds from its PBVH tree; external-draw
+         * objects from the synced provider-node bounds (the object bounds are
+         * the undisplaced cage). */
         ResourceHandleRange handle = object_state.sculpt_pbvh ?
                                          manager.unique_handle_for_sculpt(ob_ref) :
-                                         manager.unique_handle(ob_ref);
+                                         manager.unique_handle_for_external(ob_ref);
         this->sculpt_sync(manager, ob_ref, handle, object_state);
         emitter_handle = handle;
       }
