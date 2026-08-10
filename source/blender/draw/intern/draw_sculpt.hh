@@ -26,6 +26,14 @@ struct SculptBatch {
   gpu::Batch *batch;
   int material_slot;
   int debug_index;
+  /* External-provider batches only (see #external_batches_get): whether the
+   * provider filled a real mask / face-set stream for this node, as opposed to
+   * the neutral constants every external batch carries so the sculpt-overlay
+   * shader can bind. The overlay skips batches with neither — drawing them
+   * would blend a whole-mesh no-op pass on top of the base render. Batches
+   * from #sculpt_batches_get leave these false (that path gates per object). */
+  bool has_mask = false;
+  bool has_face_set = false;
   float3 debug_color();
 };
 

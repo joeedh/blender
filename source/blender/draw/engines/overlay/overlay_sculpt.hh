@@ -172,10 +172,16 @@ class Sculpts : Overlay {
     }
 
     /* Custom modes draw through the external provider; their batches carry
-     * the msk/fset vertex streams, so no SculptSession/pbvh is involved. */
+     * the msk/fset vertex streams, so no SculptSession/pbvh is involved.
+     * Batches with neither stream are skipped — the same "no layer, no
+     * overlay" gate the pbvh paths below apply per object, applied per node
+     * (drawing them would repaint the whole mesh with neutral constants). */
     if (BKE_object_use_external_draw(ob_ref.object, state.rv3d) && !state.is_image_render) {
       ResourceHandleRange handle = manager.unique_handle_for_external(ob_ref);
       for (SculptBatch &batch : external_batches_get(ob_ref.object, SCULPT_BATCH_DEFAULT)) {
+        if (!batch.has_mask && !batch.has_face_set) {
+          continue;
+        }
         mesh_ps_->draw(batch.batch, handle);
       }
       return;

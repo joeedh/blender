@@ -263,25 +263,19 @@ static void node_upload(NodeCache &cache,
       GPU_batch_discard(cache.batch);
       cache.batch = nullptr;
     }
-    /* Dynamic: the CPU-side data is kept so a stroke can re-upload positions
-     * each frame (static usage frees it after the first GPU upload). */
-    cache.pos = gpu::VertBufPtr(
-        GPU_vertbuf_create_with_format_ex(position_format(), GPU_USAGE_DYNAMIC));
-    cache.nor = gpu::VertBufPtr(
-        GPU_vertbuf_create_with_format_ex(normal_format(), GPU_USAGE_DYNAMIC));
-    GPU_vertbuf_data_alloc(*cache.pos, node.verts_num);
-    GPU_vertbuf_data_alloc(*cache.nor, node.verts_num);
+    /* Static usage, like #draw_pbvh's node buffers: the driver keeps the
+     * buffer device-local, where vertex fetch belongs. The host copy is freed
+     * on upload, so every refill below re-allocates it first. */
+    cache.pos = gpu::VertBufPtr(GPU_vertbuf_create_with_format(position_format()));
+    cache.nor = gpu::VertBufPtr(GPU_vertbuf_create_with_format(normal_format()));
     if (have_color_src) {
-      cache.col = gpu::VertBufPtr(
-          GPU_vertbuf_create_with_format_ex(*color_format, GPU_USAGE_DYNAMIC));
-      GPU_vertbuf_data_alloc(*cache.col, node.verts_num);
+      cache.col = gpu::VertBufPtr(GPU_vertbuf_create_with_format(*color_format));
     }
     else {
       cache.col.reset();
     }
     if (have_uv_src) {
-      cache.uv = gpu::VertBufPtr(GPU_vertbuf_create_with_format_ex(*uv_format, GPU_USAGE_DYNAMIC));
-      GPU_vertbuf_data_alloc(*cache.uv, node.verts_num);
+      cache.uv = gpu::VertBufPtr(GPU_vertbuf_create_with_format(*uv_format));
     }
     else {
       cache.uv.reset();
@@ -291,12 +285,8 @@ static void node_upload(NodeCache &cache,
      * attribute binds as zeros — for fset (multiplied in) that would render
      * the object black. A provider that fills no mask/fset slot gets the
      * neutral constants instead (mask 0, face-set white). */
-    cache.msk = gpu::VertBufPtr(
-        GPU_vertbuf_create_with_format_ex(mask_format(), GPU_USAGE_DYNAMIC));
-    GPU_vertbuf_data_alloc(*cache.msk, node.verts_num);
-    cache.fset = gpu::VertBufPtr(
-        GPU_vertbuf_create_with_format_ex(fset_format(), GPU_USAGE_DYNAMIC));
-    GPU_vertbuf_data_alloc(*cache.fset, node.verts_num);
+    cache.msk = gpu::VertBufPtr(GPU_vertbuf_create_with_format(mask_format()));
+    cache.fset = gpu::VertBufPtr(GPU_vertbuf_create_with_format(fset_format()));
     cache.verts_num = node.verts_num;
     cache.has_color = have_color_src;
     cache.has_uv = have_uv_src;
@@ -304,10 +294,19 @@ static void node_upload(NodeCache &cache,
     cache.has_fset = have_fset_src;
   }
 
+  /* Streams refilled this upload. Positions/normals always; provider-fed
+   * attribute streams whenever a live source exists. The neutral mask/fset
+   * constants only need writing into a fresh allocation — the uploaded GPU
+   * copy persists across data-only uploads. */
+  const bool fill_msk = realloc || have_mask_src;
+  const bool fill_fset = realloc || have_fset_src;
+
+  GPU_vertbuf_data_alloc(*cache.pos, node.verts_num);
   MutableSpan<float3> positions = cache.pos->data<float3>();
   positions.copy_from(
       Span<float3>(reinterpret_cast<const float3 *>(node.positions), node.verts_num));
 
+  GPU_vertbuf_data_alloc(*cache.nor, node.verts_num);
   MutableSpan<short4> normals = cache.nor->data<short4>();
   if (node.normals != nullptr) {
     const Span<float3> src(reinterpret_cast<const float3 *>(node.normals), node.verts_num);
@@ -330,16 +329,19 @@ static void node_upload(NodeCache &cache,
 
   if (have_color_src) {
     /* Engine color stream (float4, slot 0). */
+    GPU_vertbuf_data_alloc(*cache.col, node.verts_num);
     MutableSpan<float4> colors = cache.col->data<float4>();
     colors.copy_from(Span<float4>(static_cast<const float4 *>(node.attrs[0]), node.verts_num));
   }
   if (have_uv_src) {
     /* Engine UV stream (float2, slot 1). */
+    GPU_vertbuf_data_alloc(*cache.uv, node.verts_num);
     MutableSpan<float2> uvs = cache.uv->data<float2>();
     uvs.copy_from(Span<float2>(static_cast<const float2 *>(node.attrs[1]), node.verts_num));
   }
-  {
+  if (fill_msk) {
     /* Engine sculpt-mask stream (float, slot 2); zeros when unfilled. */
+    GPU_vertbuf_data_alloc(*cache.msk, node.verts_num);
     MutableSpan<float> masks = cache.msk->data<float>();
     if (have_mask_src) {
       masks.copy_from(Span<float>(static_cast<const float *>(node.attrs[2]), node.verts_num));
@@ -347,7 +349,10 @@ static void node_upload(NodeCache &cache,
     else {
       masks.fill(0.0f);
     }
+  }
+  if (fill_fset) {
     /* Engine face-set color stream (float3, slot 3); white when unfilled. */
+    GPU_vertbuf_data_alloc(*cache.fset, node.verts_num);
     MutableSpan<float3> fsets = cache.fset->data<float3>();
     if (have_fset_src) {
       fsets.copy_from(Span<float3>(static_cast<const float3 *>(node.attrs[3]), node.verts_num));
@@ -360,24 +365,26 @@ static void node_upload(NodeCache &cache,
   /* Flag the refilled buffers and force the upload now (like #draw_pbvh's
    * node updates): the GL backend only processes the dirty flag on a bind,
    * and a batch's cached VAO never rebinds its vertbufs — without the
-   * explicit use the viewport keeps drawing the stale upload. */
+   * explicit use the viewport keeps drawing the stale upload. The upload also
+   * frees the host copy (static usage), which is why every refill above
+   * starts with a fresh #GPU_vertbuf_data_alloc. */
   GPU_vertbuf_tag_dirty(cache.pos.get());
   GPU_vertbuf_use(cache.pos.get());
   GPU_vertbuf_tag_dirty(cache.nor.get());
   GPU_vertbuf_use(cache.nor.get());
-  if (cache.col) {
+  if (cache.col && have_color_src) {
     GPU_vertbuf_tag_dirty(cache.col.get());
     GPU_vertbuf_use(cache.col.get());
   }
-  if (cache.uv) {
+  if (cache.uv && have_uv_src) {
     GPU_vertbuf_tag_dirty(cache.uv.get());
     GPU_vertbuf_use(cache.uv.get());
   }
-  if (cache.msk) {
+  if (fill_msk) {
     GPU_vertbuf_tag_dirty(cache.msk.get());
     GPU_vertbuf_use(cache.msk.get());
   }
-  if (cache.fset) {
+  if (fill_fset) {
     GPU_vertbuf_tag_dirty(cache.fset.get());
     GPU_vertbuf_use(cache.fset.get());
   }
@@ -498,6 +505,8 @@ Vector<SculptBatch> external_batches_get(const Object *ob, SculptBatchFeature /*
     batch.batch = node_cache.batch;
     batch.material_slot = std::clamp(node.material_index, 0, max_material);
     batch.debug_index = result.size();
+    batch.has_mask = node_cache.has_mask;
+    batch.has_face_set = node_cache.has_fset;
     result.append(batch);
   }
 
