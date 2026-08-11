@@ -38,7 +38,7 @@ struct ObjectModeType;
  * it was built against; Blender refuses a mismatch rather than reading a
  * differently-shaped struct. Bump on any layout change.
  */
-#define BKE_EXTERNAL_DRAW_ABI_VERSION 2
+#define BKE_EXTERNAL_DRAW_ABI_VERSION 3
 
 /** #ExternalDrawNode.update_flags: what changed since Blender last built this
  * node's GPU buffers, so the cache re-uploads/reallocs only what it must. */
@@ -52,13 +52,17 @@ enum eExternalDrawUpdate {
 };
 
 /**
- * One drawable node: a de-indexed triangle soup (the layout Blender's PBVH VBOs
- * also use, so conversion is a per-node memcpy plus normal packing). All
- * pointers are owned by the provider and must stay valid until the matching
+ * One drawable node: shared vertex streams plus an optional triangle index
+ * stream. Without indices the streams are a de-indexed triangle soup (the
+ * layout Blender's mesh PBVH VBOs also use, so conversion is a per-node memcpy
+ * plus normal packing); with indices they are unique vertices addressed by
+ * `indices` (the layout of Blender's grids PBVH nodes). All pointers are owned
+ * by the provider and must stay valid until the matching
  * #ExternalDrawProvider.nodes_release for this sync.
  */
 struct ExternalDrawNode {
-  /** `verts_num` positions, triangle-soup order (every 3 verts is a triangle). */
+  /** `verts_num` positions. Triangle-soup order (every 3 verts is a triangle)
+   * when `indices` is null; otherwise addressed through `indices`. */
   const float (*positions)[3];
   /** `verts_num` per-vertex normals, same order (null → flat/derived). */
   const float (*normals)[3];
@@ -68,7 +72,7 @@ struct ExternalDrawNode {
    * node does not carry the attribute. Null overall when none were requested.
    */
   const void **attrs;
-  /** Vertex count (a multiple of 3). */
+  /** Vertex count (a multiple of 3 when `indices` is null). */
   int verts_num;
   /** Material slot for this node (first face's material, clamped by Blender). */
   int material_index;
@@ -84,6 +88,15 @@ struct ExternalDrawNode {
   /** Object-space AABB, for frustum culling before upload. */
   float bounds_min[3];
   float bounds_max[3];
+  /**
+   * Optional node-local triangle index stream: 3 indices per triangle into
+   * this node's vertex streams. Null -> non-indexed soup. When set, `normals`
+   * must be provided (the flat-normal soup fallback does not apply). Static
+   * per topology: only re-read when the node reallocs (a fresh cache entry or
+   * #EXTERNAL_DRAW_UPDATE_TOPOLOGY), never on a data-only update.
+   */
+  const uint32_t *indices;
+  int indices_num;
 };
 
 /** The attribute set the engine needs this redraw (the analogue of the PBVH

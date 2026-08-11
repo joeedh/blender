@@ -258,6 +258,11 @@ static void rna_ObjectModeType_draw_provider_set(PointerRNA *ptr, const char *va
   BKE_object_mode_draw_provider_set(mt, reinterpret_cast<const ExternalDrawProvider *>(addr));
 }
 
+static int rna_ObjectModeType_draw_provider_abi_version_get(PointerRNA * /*ptr*/)
+{
+  return BKE_EXTERNAL_DRAW_ABI_VERSION;
+}
+
 static bool rna_ObjectModeType_unregister(Main *bmain, StructRNA *type)
 {
   ObjectModeType *mt = static_cast<ObjectModeType *>(RNA_struct_blender_type_get(type));
@@ -575,6 +580,23 @@ static void rna_def_object_mode_type(BlenderRNA *brna)
       "Draw Provider",
       "Decimal address of the native ExternalDrawProvider the mode draws its viewport "
       "geometry through (empty uses the default flush-to-mesh draw path)");
+
+  /* Registration rejects a provider built against a different ABI version and
+   * leaves the mode drawing the evaluated mesh, with nothing raised Python-side
+   * (the string setter cannot report). Exposing the expected version — also as
+   * the property *default*, readable from `bl_rna` without a mode instance —
+   * lets an addon compare against its provider's own `abi_version` field and
+   * fail loudly instead of drawing the wrong geometry in silence. */
+  prop = RNA_def_property(srna, "bl_draw_provider_abi_version", PROP_INT, PROP_NONE);
+  RNA_def_property_int_funcs(
+      prop, "rna_ObjectModeType_draw_provider_abi_version_get", nullptr, nullptr);
+  RNA_def_property_int_default(prop, BKE_EXTERNAL_DRAW_ABI_VERSION);
+  RNA_def_property_clear_flag(prop, PROP_EDITABLE);
+  RNA_def_property_ui_text(
+      prop,
+      "Draw Provider ABI Version",
+      "ABI version of the ExternalDrawProvider structs this Blender reads; a provider "
+      "reporting any other version is rejected at registration");
 
   prop = RNA_def_property(srna, "bl_use_custom_undo", PROP_BOOLEAN, PROP_NONE);
   RNA_def_property_boolean_sdna(prop, nullptr, "flag", OBJECT_MODE_TYPE_USE_CUSTOM_UNDO);

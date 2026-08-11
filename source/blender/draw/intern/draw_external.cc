@@ -31,6 +31,7 @@
 #include "DEG_depsgraph_query.hh"
 
 #include "GPU_batch.hh"
+#include "GPU_index_buffer.hh"
 #include "GPU_vertex_buffer.hh"
 #include "GPU_vertex_format.hh"
 
@@ -140,8 +141,10 @@ struct NodeCache {
   gpu::VertBufPtr uv;
   gpu::VertBufPtr msk;
   gpu::VertBufPtr fset;
+  gpu::IndexBufPtr ibo;
   gpu::Batch *batch = nullptr;
   int verts_num = 0;
+  int indices_num = 0;
   bool has_color = false;
   bool has_uv = false;
   bool has_mask = false;
@@ -164,8 +167,10 @@ struct NodeCache {
         uv(std::move(other.uv)),
         msk(std::move(other.msk)),
         fset(std::move(other.fset)),
+        ibo(std::move(other.ibo)),
         batch(other.batch),
         verts_num(other.verts_num),
+        indices_num(other.indices_num),
         has_color(other.has_color),
         has_uv(other.has_uv),
         has_mask(other.has_mask),
@@ -185,8 +190,10 @@ struct NodeCache {
       uv = std::move(other.uv);
       msk = std::move(other.msk);
       fset = std::move(other.fset);
+      ibo = std::move(other.ibo);
       batch = other.batch;
       verts_num = other.verts_num;
+      indices_num = other.indices_num;
       has_color = other.has_color;
       has_uv = other.has_uv;
       has_mask = other.has_mask;
@@ -249,7 +256,10 @@ static void node_upload(NodeCache &cache,
   const bool have_uv_src = want_uv && node.attrs != nullptr && node.attrs[1] != nullptr;
   const bool have_mask_src = node.attrs != nullptr && node.attrs[2] != nullptr;
   const bool have_fset_src = node.attrs != nullptr && node.attrs[3] != nullptr;
+  const bool have_indices = node.indices != nullptr && node.indices_num > 0;
+  /* `indices_num` differing covers indexed-ness flipping too (0 vs > 0). */
   const bool realloc = cache.batch == nullptr || cache.verts_num != node.verts_num ||
+                       cache.indices_num != (have_indices ? node.indices_num : 0) ||
                        cache.has_color != have_color_src || cache.has_uv != have_uv_src ||
                        cache.has_mask != have_mask_src || cache.has_fset != have_fset_src ||
                        (node.update_flags & EXTERNAL_DRAW_UPDATE_TOPOLOGY) != 0;
@@ -287,7 +297,21 @@ static void node_upload(NodeCache &cache,
      * neutral constants instead (mask 0, face-set white). */
     cache.msk = gpu::VertBufPtr(GPU_vertbuf_create_with_format(mask_format()));
     cache.fset = gpu::VertBufPtr(GPU_vertbuf_create_with_format(fset_format()));
+    /* Indices are static per node topology (the provider only changes them
+     * together with a TOPOLOGY flag / vertex-count change, both of which land
+     * here), so the IBO is built once per realloc and untouched by data-only
+     * uploads. NOTE: #GPU_indexbuf_build_from_memory takes the *primitive*
+     * count, not the index count. */
+    if (have_indices) {
+      BLI_assert(node.indices_num % 3 == 0);
+      cache.ibo = gpu::IndexBufPtr(GPU_indexbuf_build_from_memory(
+          GPU_PRIM_TRIS, node.indices, node.indices_num / 3, 0, node.verts_num - 1, false));
+    }
+    else {
+      cache.ibo.reset();
+    }
     cache.verts_num = node.verts_num;
+    cache.indices_num = have_indices ? node.indices_num : 0;
     cache.has_color = have_color_src;
     cache.has_uv = have_uv_src;
     cache.has_mask = have_mask_src;
@@ -313,6 +337,12 @@ static void node_upload(NodeCache &cache,
     for (const int i : IndexRange(node.verts_num)) {
       normals[i] = normal_float_to_short(src[i]);
     }
+  }
+  else if (have_indices) {
+    /* The ABI requires normals on indexed nodes (the flat fallback below
+     * assumes triangle-soup vertex order). Keep the output defined anyway. */
+    BLI_assert_msg(false, "Indexed external draw node must provide normals");
+    normals.fill(short4(0));
   }
   else {
     /* Flat: one geometric normal per triangle (soup order, every 3 verts). */
@@ -390,7 +420,8 @@ static void node_upload(NodeCache &cache,
   }
 
   if (realloc) {
-    cache.batch = GPU_batch_create(GPU_PRIM_TRIS, nullptr, nullptr);
+    /* The batch borrows the IBO; `cache.ibo` keeps ownership. */
+    cache.batch = GPU_batch_create(GPU_PRIM_TRIS, nullptr, cache.ibo.get());
     GPU_batch_vertbuf_add(cache.batch, cache.pos.get(), false);
     GPU_batch_vertbuf_add(cache.batch, cache.nor.get(), false);
     if (cache.col) {
