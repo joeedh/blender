@@ -48,6 +48,7 @@
 #include "BLT_translation.hh"
 
 #include "BKE_blender_version.h"
+#include "BKE_callbacks.hh"
 #include "BKE_context.hh"
 #include "BKE_global.hh"
 #include "BKE_icons.hh"
@@ -439,6 +440,17 @@ void wm_quit_with_optional_confirmation_prompt(bContext *C, wmWindow *win)
   /* The popup will be displayed in the context window which may not be set
    * here (this function gets called outside of normal event handling loop). */
   CTX_wm_window_set(C, win);
+
+  /* Give Python a chance to intercept the quit while it can still be stopped, so add-ons can warn
+   * about unsaved data of their own (brush assets, for example) the way this function warns about
+   * the file. A handler that returns true takes the quit over entirely: nothing is prompted or
+   * scheduled here, and it is up to the handler to quit later. */
+  if (!G.background &&
+      BKE_callback_exec_vetoable(CTX_data_main(C), nullptr, 0, BKE_CB_EVT_QUIT_PRE))
+  {
+    CTX_wm_window_set(C, win_ctx);
+    return;
+  }
 
   if (U.uiflag & USER_SAVE_PROMPT) {
     if (wm_file_or_session_data_has_unsaved_changes(CTX_data_main(C), CTX_wm_manager(C)) &&

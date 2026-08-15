@@ -6,6 +6,8 @@
 #include "BLI_listbase.hh"
 #include "BLI_path_utils.hh"
 #include "BLI_string_utf8.hh"
+#include "BLI_uuid.hh"
+#include "BLI_vector.hh"
 
 #include "DNA_brush_types.h"
 #include "DNA_scene_types.h"
@@ -25,6 +27,7 @@
 #include "BKE_preview_image.hh"
 #include "BKE_report.hh"
 
+#include "AS_asset_catalog.hh"
 #include "AS_asset_catalog_path.hh"
 #include "AS_asset_library.hh"
 #include "AS_asset_representation.hh"
@@ -743,6 +746,186 @@ void BRUSH_OT_asset_save(wmOperatorType *ot)
   ot->exec = brush_asset_save_exec;
   ot->poll = brush_asset_save_poll;
 }
+
+/* -------------------------------------------------------------------- */
+/** \name Save All Brush Assets
+ *
+ * Batch counterpart of #BRUSH_OT_asset_save / #BRUSH_OT_asset_save_as, for every brush with unsaved
+ * changes rather than just the active one. Brushes whose asset blend file cannot be written (the
+ * bundled essentials library) are saved as a copy into a writable user library instead.
+ * \{ */
+
+/**
+ * The catalog the brush sits in *in its own library*, resolved to a path so it can be recreated in
+ * another library (catalog IDs are per library). Nothing if the brush has no catalog, or its
+ * library or catalog cannot be resolved.
+ */
+static std::optional<asset_system::AssetCatalogPath> brush_asset_catalog_path(Main &bmain,
+                                                                              const Brush &brush)
+{
+  if (brush.id.asset_data == nullptr || BLI_uuid_is_nil(brush.id.asset_data->catalog_id)) {
+    return std::nullopt;
+  }
+  const std::optional<AssetWeakReference> weak_ref = bke::asset_edit_weak_reference_from_id(
+      brush.id);
+  if (!weak_ref) {
+    return std::nullopt;
+  }
+
+  std::optional<AssetLibraryReference> library_ref;
+  switch (weak_ref->asset_library_type) {
+    case ASSET_LIBRARY_ESSENTIALS:
+      library_ref = asset_system::essentials_library_reference();
+      break;
+    case ASSET_LIBRARY_ONLINE_ESSENTIALS:
+      library_ref = asset_system::online_essentials_library_reference();
+      break;
+    case ASSET_LIBRARY_CUSTOM:
+      if (const bUserAssetLibrary *user_library = BKE_preferences_asset_library_find_by_name(
+              &U, weak_ref->asset_library_identifier))
+      {
+        library_ref = asset::user_library_to_library_ref(*user_library);
+      }
+      break;
+    default:
+      break;
+  }
+  if (!library_ref) {
+    return std::nullopt;
+  }
+
+  const asset_system::AssetLibrary *library = AS_asset_library_load(&bmain, *library_ref);
+  if (!library) {
+    return std::nullopt;
+  }
+  const asset_system::AssetCatalog *catalog = library->catalog_service().find_catalog(
+      brush.id.asset_data->catalog_id);
+  return catalog ? std::make_optional(catalog->path) : std::nullopt;
+}
+
+static wmOperatorStatus brush_asset_save_all_exec(bContext *C, wmOperator *op)
+{
+  Main *bmain = CTX_data_main(C);
+
+  /* Collect up front: saving a copy adds brushes to `bmain`, which must not be visited by this
+   * loop (they are saved by construction). */
+  Vector<Brush *> unsaved;
+  for (Brush &brush : bmain->brushes) {
+    if (brush.has_unsaved_changes && ID_IS_ASSET(&brush.id) &&
+        bke::asset_edit_id_is_editable(brush.id))
+    {
+      unsaved.append(&brush);
+    }
+  }
+  if (unsaved.is_empty()) {
+    BKE_report(op->reports, RPT_INFO, "No brush assets with unsaved changes");
+    return OPERATOR_CANCELLED;
+  }
+
+  Paint *active_paint = BKE_paint_get_active_from_context(C);
+  const Brush *active_brush = active_paint ? BKE_paint_brush(active_paint) : nullptr;
+
+  int num_saved = 0;
+  int num_copied = 0;
+  int num_failed = 0;
+  std::optional<AssetLibraryReference> refresh_library_ref;
+
+  for (Brush *brush : unsaved) {
+    if (bke::asset_edit_id_is_writable(brush->id)) {
+      if (bke::asset_edit_id_save(*bmain, brush->id, *op->reports)) {
+        brush->has_unsaved_changes = false;
+        num_saved++;
+      }
+      else {
+        num_failed++;
+      }
+      continue;
+    }
+
+    /* Read-only source library (the bundled essentials, typically): the edits can only be kept as a
+     * new asset in a writable user library. */
+    const std::optional<AssetLibraryReference> dest_library_ref =
+        asset::get_user_library_ref_for_save();
+    const bUserAssetLibrary *user_library =
+        dest_library_ref ? BKE_preferences_asset_library_find_index(
+                               &U, dest_library_ref->custom_library_index) :
+                           nullptr;
+    asset_system::AssetLibrary *dest_library = user_library ?
+                                                   AS_asset_library_load(bmain,
+                                                                         *dest_library_ref) :
+                                                   nullptr;
+    if (!dest_library) {
+      BKE_report(op->reports, RPT_ERROR, "No editable asset library to save copies into");
+      num_failed += unsaved.size() - (num_saved + num_copied + num_failed);
+      break;
+    }
+
+    /* Catalog IDs are per library, so the source catalog has to be recreated by path in the
+     * destination and the brush pointed at that one. */
+    if (const std::optional<asset_system::AssetCatalogPath> catalog_path =
+            brush_asset_catalog_path(*bmain, *brush))
+    {
+      const asset_system::AssetCatalog &catalog = asset::library_ensure_catalogs_in_path(
+          *dest_library, *catalog_path);
+      BKE_asset_metadata_catalog_id_set(
+          brush->id.asset_data, catalog.catalog_id, catalog.simple_name.c_str());
+    }
+
+    AssetWeakReference new_asset_reference;
+    const std::optional<std::string> final_full_asset_filepath = bke::asset_edit_id_save_as(
+        *bmain, brush->id, brush->id.name + 2, *user_library, new_asset_reference, *op->reports);
+    if (!final_full_asset_filepath) {
+      num_failed++;
+      continue;
+    }
+    dest_library->catalog_service().write_to_disk(*final_full_asset_filepath);
+    refresh_library_ref = dest_library_ref;
+
+    Brush *new_brush = reinterpret_cast<Brush *>(
+        bke::asset_edit_id_from_weak_reference(*bmain, ID_BR, new_asset_reference));
+    if (new_brush) {
+      new_brush->has_unsaved_changes = false;
+      if (brush == active_brush && active_paint) {
+        WM_toolsystem_activate_brush_and_tool(C, active_paint, new_brush);
+      }
+    }
+    /* The read-only original keeps its edited values in memory (nothing can write them back to a
+     * read-only library), but they are preserved in the copy now, so it stops being reported as
+     * unsaved. */
+    brush->has_unsaved_changes = false;
+    num_copied++;
+  }
+
+  if (refresh_library_ref) {
+    asset::refresh_asset_library(C, *refresh_library_ref);
+  }
+  WM_main_add_notifier(NC_ASSET | ND_ASSET_LIST | NA_EDITED, nullptr);
+  WM_main_add_notifier(NC_BRUSH | NA_EDITED, nullptr);
+
+  BKE_reportf(op->reports,
+              RPT_INFO,
+              "Saved %d brush asset(s), %d as a new copy",
+              num_saved + num_copied,
+              num_copied);
+  if (num_failed) {
+    BKE_reportf(op->reports, RPT_WARNING, "%d brush asset(s) could not be saved", num_failed);
+  }
+
+  return OPERATOR_FINISHED;
+}
+
+void BRUSH_OT_asset_save_all(wmOperatorType *ot)
+{
+  ot->name = "Save All Brush Assets";
+  ot->description =
+      "Save every brush asset with unsaved changes back to its asset library, saving a copy into a "
+      "writable library for those that came from a read-only one";
+  ot->idname = "BRUSH_OT_asset_save_all";
+
+  ot->exec = brush_asset_save_all_exec;
+}
+
+/** \} */
 
 static bool brush_asset_revert_poll(bContext *C)
 {

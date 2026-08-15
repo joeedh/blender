@@ -90,6 +90,7 @@ static PyTypeObject BlenderAppCbType;
 #define PYDOC_SCENE_TYPE "\n\n:type: list[Callable[[bpy.types.Scene], None]]"
 #define PYDOC_HANDLER_TYPE_NONE "\n\n:type: list[Callable[[], None]]"
 #define PYDOC_HANDLER_TYPE_BOOL "\n\n:type: list[Callable[[bool], None]]"
+#define PYDOC_HANDLER_TYPE_QUIT "\n\n:type: list[Callable[[], bool | None]]"
 
 /**
  * See `BKE_callbacks.hh` #eCbEvent declaration for the policy on naming.
@@ -179,6 +180,12 @@ static PyStructSequence_Field app_cb_info_fields[] = {
      "exited, or that Blender is exiting in a circumstance that should be treated as if that were "
      "the case. False indicates that Blender is running in background mode, or is exiting due to "
      "failed command line arguments, etc." PYDOC_HANDLER_TYPE_BOOL},
+    {"quit_pre",
+     "when the user asks Blender to quit, before the \"Save changes\" prompt and while the quit "
+     "can still be stopped. Never called in background mode. A handler that returns a true value "
+     "takes over the quit: Blender does not quit and does not prompt, and it is up to the handler "
+     "to quit later (typically by calling ``bpy.ops.wm.quit_blender()`` once the user has "
+     "answered whatever it asked). Handlers after it in the list still run." PYDOC_HANDLER_TYPE_QUIT},
 
 /* sets the permanent tag */
 #define APP_CB_OTHER_FIELDS 1
@@ -441,6 +448,7 @@ void bpy_app_generic_callback(Main * /*main*/,
                               const int pointers_num,
                               void *arg)
 {
+  const eCbEvent evt = eCbEvent(POINTER_AS_INT(arg));
   PyObject *cb_list = py_cb_array[POINTER_AS_INT(arg)];
   if (PyList_GET_SIZE(cb_list) > 0) {
     const PyGILState_STATE gilstate = PyGILState_Ensure();
@@ -489,6 +497,18 @@ void bpy_app_generic_callback(Main * /*main*/,
         PyErr_PrintEx(0);
       }
       else {
+        /* Vetoable events (only) give the handler's return value a meaning: a true value asks for
+         * the pending action to be aborted. Everywhere else the return value stays ignored. */
+        if (BKE_callback_evt_is_vetoable(evt) && (ret != Py_None)) {
+          const int is_true = PyObject_IsTrue(ret);
+          if (is_true == -1) {
+            /* A broken `__bool__`; treat as "no veto" but don't leave the exception set. */
+            PyErr_Clear();
+          }
+          else if (is_true == 1) {
+            BKE_callback_veto();
+          }
+        }
         Py_DECREF(ret);
       }
     }
