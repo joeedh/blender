@@ -3054,6 +3054,14 @@ static void rna_def_object(BlenderRNA *brna)
                            "Idname of the addon-registered mode when the mode is 'CUSTOM' "
                            "(the last-used custom mode otherwise)");
 
+  prop = RNA_def_property(srna, "custom_mode_state", PROP_INT, PROP_NONE);
+  RNA_def_property_int_sdna(prop, nullptr, "custom_mode_state");
+  RNA_def_property_ui_text(prop,
+                           "Custom Mode State",
+                           "Counter a custom mode bumps when it rebuilds its live state from "
+                           "this object's data, so it can recognize undo steps that carry that "
+                           "data back");
+
   /* for data access */
   prop = RNA_def_property(srna, "bound_box", PROP_FLOAT, PROP_NONE);
   RNA_def_property_multi_array(prop, 2, boundbox_dimsize);

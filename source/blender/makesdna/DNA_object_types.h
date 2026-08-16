@@ -525,6 +525,19 @@ struct Object {
    * restored on load; sanitized to #OB_MODE_OBJECT when unregistered.
    */
   char custom_mode_id[64] = {};
+  /**
+   * Bumped by a custom mode whenever it rebuilds its live state from this
+   * object's data (#ObjectModeType.refresh), so the mode can tell an undo
+   * step whose data it already mirrors from one whose data it does not.
+   * Custom modes own their data while active — the ID the memfile undo step
+   * carries is usually *behind* the mode's live state, and restoring it must
+   * not overwrite that state. A step written after a refresh is the
+   * exception: its data is the mode's own, and returning to it (a redo past
+   * an operator that edited the data underneath the mode) means rebuilding.
+   * Zero while no refresh has happened, which reads as "not the mode's data".
+   */
+  int custom_mode_state = 0;
+  char _pad5[4] = {};
 
   /* materials */
   /** Material slots. */

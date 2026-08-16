@@ -108,6 +108,28 @@ void custom_mode_exit_all(Main *bmain, ObjectModeType *mt)
   }
 }
 
+void custom_mode_data_flush(Object *ob)
+{
+  if ((ob->mode & OB_MODE_CUSTOM) == 0) {
+    return;
+  }
+  ObjectModeType *mt = BKE_object_mode_type_find(ob->custom_mode_id);
+  if (mt && mt->flush) {
+    mt->flush(mt, ob);
+  }
+}
+
+void custom_mode_data_changed(bContext *C, Object *ob)
+{
+  if ((ob->mode & OB_MODE_CUSTOM) == 0) {
+    return;
+  }
+  ObjectModeType *mt = BKE_object_mode_type_find(ob->custom_mode_id);
+  if (mt && mt->refresh) {
+    mt->refresh(mt, C, ob);
+  }
+}
+
 /** \} */
 
 /* -------------------------------------------------------------------- */

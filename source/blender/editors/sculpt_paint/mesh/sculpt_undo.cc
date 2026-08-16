@@ -2462,7 +2462,13 @@ static bool use_multires_mesh(bContext *C)
   }
 
   const Object *object = CTX_data_active_object(C);
+  /* A custom mode declaring #OBJECT_MODE_TYPE_USE_SCULPT_PAINT reports as
+   * PaintMode::Sculpt above but runs its own session, so there is no
+   * #SculptSession here; such a mode gets the plain #ED_undo_push fallback. */
   const SculptSession *sculpt_session = object->runtime->sculpt_session;
+  if (sculpt_session == nullptr) {
+    return false;
+  }
 
   return sculpt_session->multires_modifier;
 }

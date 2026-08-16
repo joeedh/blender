@@ -463,6 +463,21 @@ ObjectModeType *custom_mode_pending_get();
 /** Force-exit every object in custom mode `mt` (mode type unregistration). */
 void custom_mode_exit_all(Main *bmain, ObjectModeType *mt);
 
+/**
+ * Bracket an operator that rewrites the object's data from the outside while a
+ * custom mode is active on it. A custom mode owns its session state (the data
+ * ID only catches up on flush) and draws from that session, so an operator
+ * that edits the ID directly would otherwise read stale geometry and have its
+ * result overwritten by the next flush.
+ *
+ * `custom_mode_data_flush` bakes the session into the data ID so the operator
+ * works on what the user sees; `custom_mode_data_changed` tells the mode to
+ * rebuild its session from the (now modified) ID. Both are no-ops on objects
+ * that are not in a custom mode, or whose mode leaves the callback undefined.
+ */
+void custom_mode_data_flush(Object *ob);
+void custom_mode_data_changed(bContext *C, Object *ob);
+
 void posemode_set_for_weight_paint(bContext *C, Main *bmain, Object *ob, bool is_mode_set);
 
 /**
