@@ -109,6 +109,12 @@ Core (C/C++):
   inert outside MSVC ASAN builds and suppress genuine false positives from the
   bundled CPython's poisoned obmalloc pools. Not scaffolding — do not treat the
   now-neutral comments as removable.
+- **Pressure-test every plan after formulation.** Launch multiple adversarial
+  agents with fresh contexts (one lens each — per-workstream buildability,
+  semantics/correctness, cross-cutting seams and gates) whose brief is to
+  *kill* the plan against the actual code, then fold every surviving finding
+  back into the plan before any phase starts. A citation audit is not a
+  substitute: it verifies references, not buildability.
 
 ## Related repositories
 
