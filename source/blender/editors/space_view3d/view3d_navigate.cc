@@ -846,7 +846,7 @@ bool view3d_orbit_calc_center(bContext *C, float r_dyn_ofs[3])
   {
     /* A custom mode sharing the sculpt paint settings orbits the way sculpt mode
      * does: around the last stroke's average, or the object origin before one. */
-    BKE_paint_stroke_get_average(paint, ob_act_eval, ofs);
+    ofs = bke::paint::stroke_get_average(paint, ob_act_eval);
     is_set = true;
   }
   else if (ob_act && ELEM(ob_act->mode,
