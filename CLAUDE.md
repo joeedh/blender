@@ -116,6 +116,34 @@ Core (C/C++):
   back into the plan before any phase starts. A citation audit is not a
   substitute: it verifies references, not buildability.
 
+## Pushing this branch
+
+Push to the `github` remote only (`joeedh/blender`) — never `origin` (upstream
+`projects.blender.org`). The user pushes the `joeedh` remote (git.blender.org)
+themselves.
+
+`custom-object-modes` is routinely rebased onto upstream, so pushing it is
+normally a force-push:
+
+```
+GIT_LFS_SKIP_PUSH=1 git push --force-with-lease=custom-object-modes:<expected-remote-sha> github custom-object-modes
+```
+
+`GIT_LFS_SKIP_PUSH=1` is required, not optional. The GitHub fork carries no LFS
+storage — it holds LFS *pointer text* only, for every LFS-tracked path, never
+the real binary content. A plain `git push` runs the `pre-push` hook (`git lfs
+pre-push`), which tries to upload every LFS object touched by the pushed
+commits and fails/is disallowed on the fork. This is intentional, not a repo
+bug: `.github/workflows/build.yml` in the addon repo checks out with `lfs:
+false` and instead runs `git lfs pull` against
+`https://projects.blender.org/blender/blender.git` — LFS objects are
+content-addressed, so the upstream serves identical bytes regardless of which
+mirror's pointer referenced them. No history rewrite is ever needed to strip
+LFS content; the fork was never meant to hold any.
+
+`--force-with-lease` needs the remote's current head sha, e.g. via
+`git ls-remote https://github.com/joeedh/blender.git refs/heads/custom-object-modes`.
+
 ## Related repositories
 
 - **`sculptcore-blender-addon`** — the sculpt mode addon + engine submodule; it
