@@ -10294,13 +10294,14 @@ static int bpy_class_call(bContext *C, PointerRNA *ptr, FunctionRNA *func, Param
     return -1;
   }
 
+  bContext *C_prev = BPY_context_get();
   /* XXX, this is needed because render engine calls without a context
    * this should be supported at some point, but at the moment it's not! */
   if (C == nullptr) {
-    C = BPY_context_get();
+    C = C_prev;
   }
 
-  bpy_context_set(C, &gilstate);
+  const bool context_set = bpy_context_set(C, &gilstate);
 
   /* Annoying! We need to check if the screen gets set to nullptr which is a
    * hint that the file was actually re-loaded. */
@@ -10605,6 +10606,12 @@ static int bpy_class_call(bContext *C, PointerRNA *ptr, FunctionRNA *func, Param
                RNA_function_identifier(func));
   }
 
+  /* A callback can use a temporary context, for example when closing popups
+   * during type unregistration. Do not leave bpy.context pointing to it after
+   * returning to the caller that will free it. */
+  if (context_set && C != C_prev) {
+    BPY_context_update(C_prev);
+  }
   bpy_context_clear(C, &gilstate);
 
   return err;
