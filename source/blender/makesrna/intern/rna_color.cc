@@ -39,8 +39,10 @@ const EnumPropertyItem rna_enum_color_space_convert_default_items[] = {
 #  include <fmt/format.h>
 
 #  include "RNA_access.hh"
+#  include "RNA_owned_curve.hh"
 #  include "RNA_path.hh"
 
+#  include "DNA_brush_types.h"
 #  include "DNA_image_types.h"
 #  include "DNA_material_types.h"
 #  include "DNA_movieclip_types.h"
@@ -54,6 +56,7 @@ const EnumPropertyItem rna_enum_color_space_convert_default_items[] = {
 #  include "BLI_listbase.hh"
 #  include "BLI_string_utf8.hh"
 
+#  include "BKE_brush.hh"
 #  include "BKE_colorband.hh"
 #  include "BKE_colortools.hh"
 #  include "BKE_context.hh"
@@ -74,6 +77,27 @@ const EnumPropertyItem rna_enum_color_space_convert_default_items[] = {
 #  include "SEQ_relations.hh"
 
 namespace blender {
+
+/** Notify the data that was edited, independently of the active paint context. */
+static void rna_CurveMapping_notify_owner(ID *owner)
+{
+  if (!owner) {
+    return;
+  }
+  if (GS(owner->name) == ID_BR) {
+    Brush *brush = id_cast<Brush *>(owner);
+    BKE_brush_tag_unsaved_changes(brush);
+    WM_main_add_notifier(NC_BRUSH | NA_EDITED, brush);
+  }
+  else if (GS(owner->name) == ID_SCE) {
+    WM_main_add_notifier(NC_SCENE | ND_TOOLSETTINGS, owner);
+  }
+}
+
+static void rna_CurveMapping_notify(Main * /*bmain*/, Scene * /*scene*/, PointerRNA *ptr)
+{
+  rna_CurveMapping_notify_owner(ptr->owner_id);
+}
 
 struct SeqCurveMappingUpdateData {
   Scene *scene;
@@ -109,6 +133,9 @@ static void seq_notify_curve_update(CurveMapping *curve, ID *id)
 
 static int rna_CurveMapping_curves_length(PointerRNA *ptr)
 {
+  if (!RNA_owned_curve_validate(*ptr)) {
+    return 0;
+  }
   CurveMapping *cumap = static_cast<CurveMapping *>(ptr->data);
   int len;
 
@@ -123,6 +150,14 @@ static int rna_CurveMapping_curves_length(PointerRNA *ptr)
 
 static void rna_CurveMapping_curves_begin(CollectionPropertyIterator *iter, PointerRNA *ptr)
 {
+  if (!RNA_owned_curve_validate(*ptr)) {
+    iter->valid = false;
+    return;
+  }
+  PointerRNA parent = *ptr;
+  RNA_owned_curve_pin(parent);
+  iter->parent = parent;
+  ptr = &parent;
   CurveMapping *cumap = static_cast<CurveMapping *>(ptr->data);
 
   rna_iterator_array_begin(
@@ -176,15 +211,15 @@ static void rna_CurveMapping_tone_update(Main * /*bmain*/, Scene * /*scene*/, Po
     curve_mapping->cur = 3;
   }
 
+  rna_CurveMapping_notify_owner(ptr->owner_id);
   seq_notify_curve_update(curve_mapping, ptr->owner_id);
   WM_main_add_notifier(NC_NODE | NA_EDITED, nullptr);
   WM_main_add_notifier(NC_SCENE | ND_SEQUENCER, nullptr);
 }
 
-static void rna_CurveMapping_extend_update(Main * /*bmain*/,
-                                           Scene * /*scene*/,
-                                           PointerRNA * /*ptr*/)
+static void rna_CurveMapping_extend_update(Main * /*bmain*/, Scene * /*scene*/, PointerRNA *ptr)
 {
+  rna_CurveMapping_notify_owner(ptr->owner_id);
   WM_main_add_notifier(NC_NODE | NA_EDITED, nullptr);
   WM_main_add_notifier(NC_SCENE | ND_SEQUENCER, nullptr);
 }
@@ -192,6 +227,10 @@ static void rna_CurveMapping_extend_update(Main * /*bmain*/,
 static void rna_CurveMapping_clipminx_range(
     PointerRNA *ptr, float *min, float *max, float * /*softmin*/, float * /*softmax*/)
 {
+  if (!RNA_owned_curve_validate(*ptr)) {
+    *min = *max = 0;
+    return;
+  }
   CurveMapping *cumap = static_cast<CurveMapping *>(ptr->data);
 
   *min = -100.0f;
@@ -201,6 +240,10 @@ static void rna_CurveMapping_clipminx_range(
 static void rna_CurveMapping_clipminy_range(
     PointerRNA *ptr, float *min, float *max, float * /*softmin*/, float * /*softmax*/)
 {
+  if (!RNA_owned_curve_validate(*ptr)) {
+    *min = *max = 0;
+    return;
+  }
   CurveMapping *cumap = static_cast<CurveMapping *>(ptr->data);
 
   *min = -100.0f;
@@ -210,6 +253,10 @@ static void rna_CurveMapping_clipminy_range(
 static void rna_CurveMapping_clipmaxx_range(
     PointerRNA *ptr, float *min, float *max, float * /*softmin*/, float * /*softmax*/)
 {
+  if (!RNA_owned_curve_validate(*ptr)) {
+    *min = *max = 0;
+    return;
+  }
   CurveMapping *cumap = static_cast<CurveMapping *>(ptr->data);
 
   *min = cumap->clipr.xmin;
@@ -219,6 +266,10 @@ static void rna_CurveMapping_clipmaxx_range(
 static void rna_CurveMapping_clipmaxy_range(
     PointerRNA *ptr, float *min, float *max, float * /*softmin*/, float * /*softmax*/)
 {
+  if (!RNA_owned_curve_validate(*ptr)) {
+    *min = *max = 0;
+    return;
+  }
   CurveMapping *cumap = static_cast<CurveMapping *>(ptr->data);
 
   *min = cumap->clipr.ymin;
@@ -424,15 +475,41 @@ static void rna_ColorRampElement_remove(ColorBand *coba,
   element_ptr->invalidate();
 }
 
-static void rna_CurveMap_remove_point(CurveMap *cuma, ReportList *reports, PointerRNA *point_ptr)
+static PointerRNA rna_CurveMap_new_point(PointerRNA self, bContext *C, float position, float value)
 {
-  CurveMapPoint *point = static_cast<CurveMapPoint *>(point_ptr->data);
-  if (BKE_curvemap_remove_point(cuma, point) == false) {
+  PointerRNA *ptr = &self;
+  if (ptr->owned_curve) {
+    return RNA_owned_curve_point_new(*ptr, position, value, C);
+  }
+  CurveMapPoint *point = BKE_curvemap_insert(static_cast<CurveMap *>(ptr->data), position, value);
+  if (point) {
+    rna_CurveMapping_notify_owner(ptr->owner_id);
+  }
+  return RNA_pointer_create_with_parent(*ptr, RNA_CurveMapPoint, point);
+}
+
+static void rna_CurveMap_remove_point(PointerRNA self,
+                                      bContext *C,
+                                      ReportList *reports,
+                                      PointerRNA *point_ptr)
+{
+  PointerRNA *ptr = &self;
+  if (ptr->owned_curve) {
+    RNA_owned_curve_point_remove(*ptr, *point_ptr, C);
+    return;
+  }
+  if (point_ptr->owned_curve) {
+    BKE_report(reports, RPT_ERROR, "Point is from an owned curve");
+    return;
+  }
+  if (!BKE_curvemap_remove_point(static_cast<CurveMap *>(ptr->data),
+                                 static_cast<CurveMapPoint *>(point_ptr->data)))
+  {
     BKE_report(reports, RPT_ERROR, "Unable to remove curve point");
     return;
   }
-
   point_ptr->invalidate();
+  rna_CurveMapping_notify_owner(ptr->owner_id);
 }
 
 static void rna_Scopes_update(Main * /*bmain*/, Scene * /*scene*/, PointerRNA *ptr)
@@ -845,28 +922,383 @@ static void rna_ColorManagement_update(Main *bmain, Scene * /*scene*/, PointerRN
 }
 
 /* this function only exists because #BKE_curvemap_evaluateF uses a 'const' qualifier */
-static float rna_CurveMapping_evaluateF(CurveMapping *cumap,
+static float rna_CurveMapping_evaluateF(PointerRNA self,
                                         ReportList *reports,
-                                        CurveMap *cuma,
+                                        PointerRNA *curve_ptr,
                                         float value)
 {
+  PointerRNA *ptr = &self;
+  if (ptr->owned_curve) {
+    return RNA_owned_curve_evaluate(*ptr, *curve_ptr, value);
+  }
+  if (curve_ptr->owned_curve) {
+    BKE_report(reports, RPT_ERROR, "Curve belongs to an owned mapping");
+    return 0;
+  }
+  CurveMapping *cumap = static_cast<CurveMapping *>(ptr->data);
+  CurveMap *cuma = static_cast<CurveMap *>(curve_ptr->data);
   if (&cumap->cm[0] != cuma && &cumap->cm[1] != cuma && &cumap->cm[2] != cuma &&
       &cumap->cm[3] != cuma)
   {
     BKE_report(reports, RPT_ERROR, "CurveMapping does not own CurveMap");
-    return 0.0f;
+    return 0;
   }
-
   if (!cuma->table) {
     BKE_curvemapping_init(cumap);
   }
   return BKE_curvemap_evaluateF(cumap, cuma, value);
 }
 
-static void rna_CurveMap_initialize(CurveMapping *cumap)
+static void rna_CurveMapping_update(PointerRNA self)
 {
-  BKE_curvemapping_init(cumap);
+  PointerRNA *ptr = &self;
+  if (ptr->owned_curve) {
+    RNA_owned_curve_validate(*ptr);
+    return;
+  }
+  BKE_curvemapping_changed_all(static_cast<CurveMapping *>(ptr->data));
+  rna_CurveMapping_notify_owner(ptr->owner_id);
 }
+
+static void rna_CurveMap_initialize(PointerRNA self)
+{
+  PointerRNA *ptr = &self;
+  if (ptr->owned_curve) {
+    RNA_owned_curve_validate(*ptr);
+    return;
+  }
+  BKE_curvemapping_init(static_cast<CurveMapping *>(ptr->data));
+}
+
+static void rna_CurveMapping_reset_view(PointerRNA self)
+{
+  PointerRNA *ptr = &self;
+  if (ptr->owned_curve) {
+    RNA_owned_curve_reset_view(*ptr);
+    return;
+  }
+  BKE_curvemapping_reset_view(static_cast<CurveMapping *>(ptr->data));
+}
+
+/* Owned curve accessors also protect direct generated RNA calls. */
+static void rna_owned_access_CurveMapPoint_location_get(PointerRNA *ptr, float *values)
+{
+  if (!RNA_owned_curve_validate(*ptr)) {
+    std::fill_n(values, 2, 0.0f);
+    return;
+  }
+  auto *data = static_cast<CurveMapPoint *>(ptr->data);
+  for (int i = 0; i < 2; i++) {
+    values[i] = (&data->x)[i];
+  }
+}
+
+static void rna_owned_access_CurveMapPoint_location_set(PointerRNA *ptr, const float *values)
+{
+  if (ptr->owned_curve) {
+    double numbers[2];
+    for (int i = 0; i < 2; i++) {
+      numbers[i] = values[i];
+    }
+    RNA_owned_curve_set(*ptr, *RNA_struct_type_find_property(ptr->type, "location"), numbers, 2);
+    return;
+  }
+  [[maybe_unused]] auto *data = static_cast<CurveMapPoint *>(ptr->data);
+  for (int i = 0; i < 2; i++) {
+    (&data->x)[i] = values[i];
+  }
+}
+
+static int rna_owned_access_CurveMapPoint_handle_type_get(PointerRNA *ptr)
+{
+  if (!RNA_owned_curve_validate(*ptr)) {
+    return int(0);
+  }
+  auto *data = static_cast<CurveMapPoint *>(ptr->data);
+  return int(data->flag) & 6;
+}
+
+static void rna_owned_access_CurveMapPoint_handle_type_set(PointerRNA *ptr, int value)
+{
+  if (ptr->owned_curve) {
+    const double number = double(value);
+    RNA_owned_curve_set(
+        *ptr, *RNA_struct_type_find_property(ptr->type, "handle_type"), &number, 1);
+    return;
+  }
+  [[maybe_unused]] auto *data = static_cast<CurveMapPoint *>(ptr->data);
+  data->flag = eCurveMapPoint_Flag((int(data->flag) & ~6) | value);
+}
+
+static bool rna_owned_access_CurveMapPoint_select_get(PointerRNA *ptr)
+{
+  if (!RNA_owned_curve_validate(*ptr)) {
+    return bool(0);
+  }
+  auto *data = static_cast<CurveMapPoint *>(ptr->data);
+  return (data->flag & CUMA_SELECT) != 0;
+}
+
+static void rna_owned_access_CurveMapPoint_select_set(PointerRNA *ptr, bool value)
+{
+  if (ptr->owned_curve) {
+    const double number = double(value);
+    RNA_owned_curve_set(*ptr, *RNA_struct_type_find_property(ptr->type, "select"), &number, 1);
+    return;
+  }
+  [[maybe_unused]] auto *data = static_cast<CurveMapPoint *>(ptr->data);
+  SET_FLAG_FROM_TEST(data->flag, value, CUMA_SELECT);
+}
+
+static int rna_owned_access_CurveMapping_tone_get(PointerRNA *ptr)
+{
+  if (!RNA_owned_curve_validate(*ptr)) {
+    return int(0);
+  }
+  auto *data = static_cast<CurveMapping *>(ptr->data);
+  return int(data->tone);
+}
+
+static void rna_owned_access_CurveMapping_tone_set(PointerRNA *ptr, int value)
+{
+  if (ptr->owned_curve) {
+    const double number = double(value);
+    RNA_owned_curve_set(*ptr, *RNA_struct_type_find_property(ptr->type, "tone"), &number, 1);
+    return;
+  }
+  [[maybe_unused]] auto *data = static_cast<CurveMapping *>(ptr->data);
+  data->tone = eCurveMappingTone(value);
+}
+
+static bool rna_owned_access_CurveMapping_use_clip_get(PointerRNA *ptr)
+{
+  if (!RNA_owned_curve_validate(*ptr)) {
+    return bool(0);
+  }
+  auto *data = static_cast<CurveMapping *>(ptr->data);
+  return (data->flag & CUMA_DO_CLIP) != 0;
+}
+
+static void rna_owned_access_CurveMapping_use_clip_set(PointerRNA *ptr, bool value)
+{
+  if (ptr->owned_curve) {
+    const double number = double(value);
+    RNA_owned_curve_set(*ptr, *RNA_struct_type_find_property(ptr->type, "use_clip"), &number, 1);
+    return;
+  }
+  [[maybe_unused]] auto *data = static_cast<CurveMapping *>(ptr->data);
+  rna_CurveMapping_clip_set(ptr, value);
+}
+
+static int rna_owned_access_CurveMapping_extend_get(PointerRNA *ptr)
+{
+  if (!RNA_owned_curve_validate(*ptr)) {
+    return int(0);
+  }
+  auto *data = static_cast<CurveMapping *>(ptr->data);
+  return int(data->flag) & CUMA_EXTEND_EXTRAPOLATE;
+}
+
+static void rna_owned_access_CurveMapping_extend_set(PointerRNA *ptr, int value)
+{
+  if (ptr->owned_curve) {
+    const double number = double(value);
+    RNA_owned_curve_set(*ptr, *RNA_struct_type_find_property(ptr->type, "extend"), &number, 1);
+    return;
+  }
+  [[maybe_unused]] auto *data = static_cast<CurveMapping *>(ptr->data);
+  SET_FLAG_FROM_TEST(data->flag, value != 0, CUMA_EXTEND_EXTRAPOLATE);
+}
+
+static void rna_owned_access_CurveMapping_black_level_get(PointerRNA *ptr, float *values)
+{
+  if (!RNA_owned_curve_validate(*ptr)) {
+    std::fill_n(values, 3, 0.0f);
+    return;
+  }
+  auto *data = static_cast<CurveMapping *>(ptr->data);
+  for (int i = 0; i < 3; i++) {
+    values[i] = data->black[i];
+  }
+}
+
+static void rna_owned_access_CurveMapping_black_level_set(PointerRNA *ptr, const float *values)
+{
+  if (ptr->owned_curve) {
+    double numbers[3];
+    for (int i = 0; i < 3; i++) {
+      numbers[i] = values[i];
+    }
+    RNA_owned_curve_set(
+        *ptr, *RNA_struct_type_find_property(ptr->type, "black_level"), numbers, 3);
+    return;
+  }
+  [[maybe_unused]] auto *data = static_cast<CurveMapping *>(ptr->data);
+  rna_CurveMapping_black_level_set(ptr, values);
+}
+
+static void rna_owned_access_CurveMapping_white_level_get(PointerRNA *ptr, float *values)
+{
+  if (!RNA_owned_curve_validate(*ptr)) {
+    std::fill_n(values, 3, 0.0f);
+    return;
+  }
+  auto *data = static_cast<CurveMapping *>(ptr->data);
+  for (int i = 0; i < 3; i++) {
+    values[i] = data->white[i];
+  }
+}
+
+static void rna_owned_access_CurveMapping_white_level_set(PointerRNA *ptr, const float *values)
+{
+  if (ptr->owned_curve) {
+    double numbers[3];
+    for (int i = 0; i < 3; i++) {
+      numbers[i] = values[i];
+    }
+    RNA_owned_curve_set(
+        *ptr, *RNA_struct_type_find_property(ptr->type, "white_level"), numbers, 3);
+    return;
+  }
+  [[maybe_unused]] auto *data = static_cast<CurveMapping *>(ptr->data);
+  rna_CurveMapping_white_level_set(ptr, values);
+}
+
+static float rna_owned_access_CurveMapping_clip_min_x_get(PointerRNA *ptr)
+{
+  if (!RNA_owned_curve_validate(*ptr)) {
+    return float(0);
+  }
+  auto *data = static_cast<CurveMapping *>(ptr->data);
+  return data->clipr.xmin;
+}
+
+static void rna_owned_access_CurveMapping_clip_min_x_set(PointerRNA *ptr, float value)
+{
+  if (ptr->owned_curve) {
+    const double number = double(value);
+    RNA_owned_curve_set(*ptr, *RNA_struct_type_find_property(ptr->type, "clip_min_x"), &number, 1);
+    return;
+  }
+  [[maybe_unused]] auto *data = static_cast<CurveMapping *>(ptr->data);
+  float low, high, soft_low, soft_high;
+  rna_CurveMapping_clipminx_range(ptr, &low, &high, &soft_low, &soft_high);
+  data->clipr.xmin = std::clamp(value, low, high);
+}
+
+static float rna_owned_access_CurveMapping_clip_min_y_get(PointerRNA *ptr)
+{
+  if (!RNA_owned_curve_validate(*ptr)) {
+    return float(0);
+  }
+  auto *data = static_cast<CurveMapping *>(ptr->data);
+  return data->clipr.ymin;
+}
+
+static void rna_owned_access_CurveMapping_clip_min_y_set(PointerRNA *ptr, float value)
+{
+  if (ptr->owned_curve) {
+    const double number = double(value);
+    RNA_owned_curve_set(*ptr, *RNA_struct_type_find_property(ptr->type, "clip_min_y"), &number, 1);
+    return;
+  }
+  [[maybe_unused]] auto *data = static_cast<CurveMapping *>(ptr->data);
+  float low, high, soft_low, soft_high;
+  rna_CurveMapping_clipminy_range(ptr, &low, &high, &soft_low, &soft_high);
+  data->clipr.ymin = std::clamp(value, low, high);
+}
+
+static float rna_owned_access_CurveMapping_clip_max_x_get(PointerRNA *ptr)
+{
+  if (!RNA_owned_curve_validate(*ptr)) {
+    return float(0);
+  }
+  auto *data = static_cast<CurveMapping *>(ptr->data);
+  return data->clipr.xmax;
+}
+
+static void rna_owned_access_CurveMapping_clip_max_x_set(PointerRNA *ptr, float value)
+{
+  if (ptr->owned_curve) {
+    const double number = double(value);
+    RNA_owned_curve_set(*ptr, *RNA_struct_type_find_property(ptr->type, "clip_max_x"), &number, 1);
+    return;
+  }
+  [[maybe_unused]] auto *data = static_cast<CurveMapping *>(ptr->data);
+  float low, high, soft_low, soft_high;
+  rna_CurveMapping_clipmaxx_range(ptr, &low, &high, &soft_low, &soft_high);
+  data->clipr.xmax = std::clamp(value, low, high);
+}
+
+static float rna_owned_access_CurveMapping_clip_max_y_get(PointerRNA *ptr)
+{
+  if (!RNA_owned_curve_validate(*ptr)) {
+    return float(0);
+  }
+  auto *data = static_cast<CurveMapping *>(ptr->data);
+  return data->clipr.ymax;
+}
+
+static void rna_owned_access_CurveMapping_clip_max_y_set(PointerRNA *ptr, float value)
+{
+  if (ptr->owned_curve) {
+    const double number = double(value);
+    RNA_owned_curve_set(*ptr, *RNA_struct_type_find_property(ptr->type, "clip_max_y"), &number, 1);
+    return;
+  }
+  [[maybe_unused]] auto *data = static_cast<CurveMapping *>(ptr->data);
+  float low, high, soft_low, soft_high;
+  rna_CurveMapping_clipmaxy_range(ptr, &low, &high, &soft_low, &soft_high);
+  data->clipr.ymax = std::clamp(value, low, high);
+}
+
+static int rna_owned_points_length(PointerRNA *ptr)
+{
+  if (!RNA_owned_curve_validate(*ptr)) {
+    return 0;
+  }
+  auto *curve = static_cast<CurveMap *>(ptr->data);
+  return curve->curve ? curve->totpoint : 0;
+}
+static void rna_owned_points_begin(CollectionPropertyIterator *iter, PointerRNA *ptr)
+{
+  if (!RNA_owned_curve_validate(*ptr)) {
+    iter->valid = false;
+    return;
+  }
+  PointerRNA parent = *ptr;
+  RNA_owned_curve_pin(parent);
+  iter->parent = parent;
+  auto *curve = static_cast<CurveMap *>(parent.data);
+  rna_iterator_array_begin(
+      iter, &parent, curve->curve, sizeof(CurveMapPoint), curve->totpoint, 0, nullptr);
+}
+static void rna_owned_array_next(CollectionPropertyIterator *iter)
+{
+  if (!RNA_owned_curve_validate(iter->parent)) {
+    iter->valid = false;
+    return;
+  }
+  rna_iterator_array_next(iter);
+}
+static PointerRNA rna_owned_points_get(CollectionPropertyIterator *iter)
+{
+  if (!RNA_owned_curve_validate(iter->parent)) {
+    iter->valid = false;
+    return {};
+  }
+  return RNA_pointer_create_with_parent(
+      iter->parent, RNA_CurveMapPoint, rna_iterator_array_get(iter));
+}
+static PointerRNA rna_owned_curves_get(CollectionPropertyIterator *iter)
+{
+  if (!RNA_owned_curve_validate(iter->parent)) {
+    iter->valid = false;
+    return {};
+  }
+  return RNA_pointer_create_with_parent(iter->parent, RNA_CurveMap, rna_iterator_array_get(iter));
+}
+/* End owned curve accessors. */
 
 }  // namespace blender
 
@@ -892,16 +1324,31 @@ static void rna_def_curvemappoint(BlenderRNA *brna)
   RNA_def_property_float_sdna(prop, nullptr, "x");
   RNA_def_property_array(prop, 2);
   RNA_def_property_ui_text(prop, "Location", "X/Y coordinates of the curve point");
+  RNA_def_property_update(prop, 0, "rna_CurveMapping_notify");
+
+  RNA_def_property_float_funcs(prop,
+                               "rna_owned_access_CurveMapPoint_location_get",
+                               "rna_owned_access_CurveMapPoint_location_set",
+                               nullptr);
 
   prop = RNA_def_property(srna, "handle_type", PROP_ENUM, PROP_NONE);
   RNA_def_property_enum_bitflag_sdna(prop, nullptr, "flag");
   RNA_def_property_enum_items(prop, prop_handle_type_items);
   RNA_def_property_ui_text(
       prop, "Handle Type", "Curve interpolation at this point: Bézier or vector");
+  RNA_def_property_update(prop, 0, "rna_CurveMapping_notify");
+
+  RNA_def_property_enum_funcs(prop,
+                              "rna_owned_access_CurveMapPoint_handle_type_get",
+                              "rna_owned_access_CurveMapPoint_handle_type_set",
+                              nullptr);
 
   prop = RNA_def_property(srna, "select", PROP_BOOLEAN, PROP_NONE);
   RNA_def_property_boolean_sdna(prop, nullptr, "flag", CUMA_SELECT);
   RNA_def_property_ui_text(prop, "Select", "Selection state of the curve point");
+  RNA_def_property_boolean_funcs(prop,
+                                 "rna_owned_access_CurveMapPoint_select_get",
+                                 "rna_owned_access_CurveMapPoint_select_set");
 }
 
 static void rna_def_curvemap_points_api(BlenderRNA *brna, PropertyRNA *cprop)
@@ -915,7 +1362,8 @@ static void rna_def_curvemap_points_api(BlenderRNA *brna, PropertyRNA *cprop)
   RNA_def_struct_sdna(srna, "CurveMap");
   RNA_def_struct_ui_text(srna, "Curve Map Point", "Collection of Curve Map Points");
 
-  func = RNA_def_function(srna, "new", "BKE_curvemap_insert");
+  func = RNA_def_function(srna, "new", "rna_CurveMap_new_point");
+  RNA_def_function_flag(func, FUNC_SELF_AS_RNA | FUNC_USE_CONTEXT);
   RNA_def_function_ui_description(func, "Add point to CurveMap");
   parm = RNA_def_float(func,
                        "position",
@@ -931,11 +1379,11 @@ static void rna_def_curvemap_points_api(BlenderRNA *brna, PropertyRNA *cprop)
       func, "value", 0.0f, -FLT_MAX, FLT_MAX, "Value", "Value of point", -FLT_MAX, FLT_MAX);
   RNA_def_parameter_flags(parm, PropertyFlag(0), PARM_REQUIRED);
   parm = RNA_def_pointer(func, "point", "CurveMapPoint", "", "New point");
-  RNA_def_parameter_flags(parm, PROP_NEVER_NULL, ParameterFlag(0));
+  RNA_def_parameter_flags(parm, PROP_THICK_WRAP, PARM_RNAPTR);
   RNA_def_function_return(func, parm);
 
   func = RNA_def_function(srna, "remove", "rna_CurveMap_remove_point");
-  RNA_def_function_flag(func, FUNC_USE_REPORTS);
+  RNA_def_function_flag(func, FUNC_SELF_AS_RNA | FUNC_USE_CONTEXT | FUNC_USE_REPORTS);
   RNA_def_function_ui_description(func, "Delete point from CurveMap");
   parm = RNA_def_pointer(func, "point", "CurveMapPoint", "", "PointElement to remove");
   RNA_def_parameter_flags(parm, PROP_NEVER_NULL, PARM_REQUIRED | PARM_RNAPTR);
@@ -952,6 +1400,15 @@ static void rna_def_curvemap(BlenderRNA *brna)
 
   prop = RNA_def_property(srna, "points", PROP_COLLECTION, PROP_NONE);
   RNA_def_property_collection_sdna(prop, nullptr, "curve", "totpoint");
+  RNA_def_property_collection_funcs(prop,
+                                    "rna_owned_points_begin",
+                                    "rna_owned_array_next",
+                                    "rna_iterator_array_end",
+                                    "rna_owned_points_get",
+                                    "rna_owned_points_length",
+                                    nullptr,
+                                    nullptr,
+                                    nullptr);
   RNA_def_property_struct_type(prop, "CurveMapPoint");
   RNA_def_property_ui_text(prop, "Points", "");
   rna_def_curvemap_points_api(brna, prop);
@@ -993,34 +1450,68 @@ static void rna_def_curvemapping(BlenderRNA *brna)
   RNA_def_property_ui_text(prop, "Tone", "Tone of the curve");
   RNA_def_property_update(prop, 0, "rna_CurveMapping_tone_update");
 
+  RNA_def_property_enum_funcs(prop,
+                              "rna_owned_access_CurveMapping_tone_get",
+                              "rna_owned_access_CurveMapping_tone_set",
+                              nullptr);
+
   prop = RNA_def_property(srna, "use_clip", PROP_BOOLEAN, PROP_NONE);
   RNA_def_property_boolean_sdna(prop, nullptr, "flag", CUMA_DO_CLIP);
   RNA_def_property_ui_text(prop, "Clip", "Force the curve view to fit a defined boundary");
   RNA_def_property_boolean_funcs(prop, nullptr, "rna_CurveMapping_clip_set");
+  RNA_def_property_update(prop, 0, "rna_CurveMapping_notify");
+
+  RNA_def_property_boolean_funcs(prop,
+                                 "rna_owned_access_CurveMapping_use_clip_get",
+                                 "rna_owned_access_CurveMapping_use_clip_set");
 
   prop = RNA_def_property(srna, "clip_min_x", PROP_FLOAT, PROP_NONE);
   RNA_def_property_float_sdna(prop, nullptr, "clipr.xmin");
   RNA_def_property_range(prop, -100.0f, 100.0f);
   RNA_def_property_ui_text(prop, "Clip Min X", "");
   RNA_def_property_float_funcs(prop, nullptr, nullptr, "rna_CurveMapping_clipminx_range");
+  RNA_def_property_update(prop, 0, "rna_CurveMapping_notify");
+
+  RNA_def_property_float_funcs(prop,
+                               "rna_owned_access_CurveMapping_clip_min_x_get",
+                               "rna_owned_access_CurveMapping_clip_min_x_set",
+                               "rna_CurveMapping_clipminx_range");
 
   prop = RNA_def_property(srna, "clip_min_y", PROP_FLOAT, PROP_NONE);
   RNA_def_property_float_sdna(prop, nullptr, "clipr.ymin");
   RNA_def_property_range(prop, -100.0f, 100.0f);
   RNA_def_property_ui_text(prop, "Clip Min Y", "");
   RNA_def_property_float_funcs(prop, nullptr, nullptr, "rna_CurveMapping_clipminy_range");
+  RNA_def_property_update(prop, 0, "rna_CurveMapping_notify");
+
+  RNA_def_property_float_funcs(prop,
+                               "rna_owned_access_CurveMapping_clip_min_y_get",
+                               "rna_owned_access_CurveMapping_clip_min_y_set",
+                               "rna_CurveMapping_clipminy_range");
 
   prop = RNA_def_property(srna, "clip_max_x", PROP_FLOAT, PROP_NONE);
   RNA_def_property_float_sdna(prop, nullptr, "clipr.xmax");
   RNA_def_property_range(prop, -100.0f, 100.0f);
   RNA_def_property_ui_text(prop, "Clip Max X", "");
   RNA_def_property_float_funcs(prop, nullptr, nullptr, "rna_CurveMapping_clipmaxx_range");
+  RNA_def_property_update(prop, 0, "rna_CurveMapping_notify");
+
+  RNA_def_property_float_funcs(prop,
+                               "rna_owned_access_CurveMapping_clip_max_x_get",
+                               "rna_owned_access_CurveMapping_clip_max_x_set",
+                               "rna_CurveMapping_clipmaxx_range");
 
   prop = RNA_def_property(srna, "clip_max_y", PROP_FLOAT, PROP_NONE);
   RNA_def_property_float_sdna(prop, nullptr, "clipr.ymax");
   RNA_def_property_range(prop, -100.0f, 100.0f);
   RNA_def_property_ui_text(prop, "Clip Max Y", "");
   RNA_def_property_float_funcs(prop, nullptr, nullptr, "rna_CurveMapping_clipmaxy_range");
+  RNA_def_property_update(prop, 0, "rna_CurveMapping_notify");
+
+  RNA_def_property_float_funcs(prop,
+                               "rna_owned_access_CurveMapping_clip_max_y_get",
+                               "rna_owned_access_CurveMapping_clip_max_y_set",
+                               "rna_CurveMapping_clipmaxy_range");
 
   prop = RNA_def_property(srna, "extend", PROP_ENUM, PROP_NONE);
   RNA_def_property_enum_bitflag_sdna(prop, nullptr, "flag");
@@ -1029,12 +1520,17 @@ static void rna_def_curvemapping(BlenderRNA *brna)
   RNA_def_property_translation_context(prop, BLT_I18NCONTEXT_ID_CURVE_LEGACY);
   RNA_def_property_update(prop, 0, "rna_CurveMapping_extend_update");
 
+  RNA_def_property_enum_funcs(prop,
+                              "rna_owned_access_CurveMapping_extend_get",
+                              "rna_owned_access_CurveMapping_extend_set",
+                              nullptr);
+
   prop = RNA_def_property(srna, "curves", PROP_COLLECTION, PROP_NONE);
   RNA_def_property_collection_funcs(prop,
                                     "rna_CurveMapping_curves_begin",
-                                    "rna_iterator_array_next",
+                                    "rna_owned_array_next",
                                     "rna_iterator_array_end",
-                                    "rna_iterator_array_get",
+                                    "rna_owned_curves_get",
                                     "rna_CurveMapping_curves_length",
                                     nullptr,
                                     nullptr,
@@ -1049,6 +1545,12 @@ static void rna_def_curvemapping(BlenderRNA *brna)
   RNA_def_property_ui_text(
       prop, "Black Level", "For RGB curves, the color that black is mapped to");
   RNA_def_property_float_funcs(prop, nullptr, "rna_CurveMapping_black_level_set", nullptr);
+  RNA_def_property_update(prop, 0, "rna_CurveMapping_notify");
+
+  RNA_def_property_float_funcs(prop,
+                               "rna_owned_access_CurveMapping_black_level_get",
+                               "rna_owned_access_CurveMapping_black_level_set",
+                               nullptr);
 
   prop = RNA_def_property(srna, "white_level", PROP_FLOAT, PROP_COLOR);
   RNA_def_property_float_sdna(prop, nullptr, "white");
@@ -1057,21 +1559,31 @@ static void rna_def_curvemapping(BlenderRNA *brna)
   RNA_def_property_ui_text(
       prop, "White Level", "For RGB curves, the color that white is mapped to");
   RNA_def_property_float_funcs(prop, nullptr, "rna_CurveMapping_white_level_set", nullptr);
+  RNA_def_property_update(prop, 0, "rna_CurveMapping_notify");
 
-  func = RNA_def_function(srna, "update", "BKE_curvemapping_changed_all");
+  RNA_def_property_float_funcs(prop,
+                               "rna_owned_access_CurveMapping_white_level_get",
+                               "rna_owned_access_CurveMapping_white_level_set",
+                               nullptr);
+
+  func = RNA_def_function(srna, "update", "rna_CurveMapping_update");
+  RNA_def_function_flag(func, FUNC_SELF_AS_RNA);
   RNA_def_function_ui_description(func, "Update curve mapping after making changes");
 
-  func = RNA_def_function(srna, "reset_view", "BKE_curvemapping_reset_view");
+  func = RNA_def_function(srna, "reset_view", "rna_CurveMapping_reset_view");
+  RNA_def_function_flag(func, FUNC_SELF_AS_RNA);
   RNA_def_function_ui_description(func, "Reset the curve mapping grid to its clipping size");
 
   func = RNA_def_function(srna, "initialize", "rna_CurveMap_initialize");
+  RNA_def_function_flag(func, FUNC_SELF_AS_RNA);
   RNA_def_function_ui_description(func, "Initialize curve");
 
   func = RNA_def_function(srna, "evaluate", "rna_CurveMapping_evaluateF");
-  RNA_def_function_flag(func, FUNC_USE_REPORTS);
+  RNA_def_function_flag(func, FUNC_SELF_AS_RNA | FUNC_USE_REPORTS);
   RNA_def_function_ui_description(func, "Evaluate curve at given location");
   parm = RNA_def_pointer(func, "curve", "CurveMap", "curve", "Curve to evaluate");
-  RNA_def_parameter_flags(parm, PROP_NEVER_NULL, PARM_REQUIRED);
+  RNA_def_parameter_flags(parm, PROP_NEVER_NULL, PARM_REQUIRED | PARM_RNAPTR);
+  RNA_def_parameter_clear_flags(parm, PROP_THICK_WRAP, ParameterFlag(0));
   parm = RNA_def_float(func,
                        "position",
                        0.0f,

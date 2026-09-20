@@ -550,6 +550,9 @@ struct ButtonCurveProfile : public Button {
 /** Derived struct for #ButtonType::Curve. */
 struct ButtonCurveMapping : public Button {
   CurveMapping *edit_cumap = nullptr;
+  /** Owned graphs edit temporary storage and can cancel their containing transaction. */
+  std::function<void()> owned_curve_cancel;
+  std::function<bool(const CurveMapping &)> owned_curve_paste_validate;
   eButGradientType gradient_type = GRAD_SV;
 };
 
@@ -1749,6 +1752,7 @@ void UI_OT_eyedropper_color(wmOperatorType *ot);
 void UI_OT_eyedropper_colorramp(wmOperatorType *ot);
 void UI_OT_eyedropper_colorramp_point(wmOperatorType *ot);
 
+void UI_OT_owned_curve_edit(wmOperatorType *ot);
 void UI_OT_eyedropper_bone(wmOperatorType *ot);
 
 /* `eyedroppers/eyedropper_datablock.cc` */

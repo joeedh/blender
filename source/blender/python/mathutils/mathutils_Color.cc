@@ -623,7 +623,9 @@ static int Color_ass_slice(
     self->col[index] = col[i];
   }
 
-  (void)BaseMath_WriteCallback(self);
+  if (BaseMath_WriteCallback(self) == -1) {
+    return -1;
+  }
   return 0;
 }
 
@@ -738,7 +740,9 @@ static PyObject *Color_iadd(PyObject *v1, PyObject *v2)
 
   add_vn_vn(color1->col, color2->col, COLOR_SIZE);
 
-  (void)BaseMath_WriteCallback(color1);
+  if (BaseMath_WriteCallback(color1) == -1) {
+    return nullptr;
+  }
   Py_INCREF(v1);
   return v1;
 }
@@ -791,7 +795,9 @@ static PyObject *Color_isub(PyObject *v1, PyObject *v2)
 
   sub_vn_vn(color1->col, color2->col, COLOR_SIZE);
 
-  (void)BaseMath_WriteCallback(color1);
+  if (BaseMath_WriteCallback(color1) == -1) {
+    return nullptr;
+  }
   Py_INCREF(v1);
   return v1;
 }
@@ -905,7 +911,9 @@ static PyObject *Color_imul(PyObject *v1, PyObject *v2)
     return nullptr;
   }
 
-  (void)BaseMath_WriteCallback(color);
+  if (BaseMath_WriteCallback(color) == -1) {
+    return nullptr;
+  }
   Py_INCREF(v1);
   return v1;
 }
@@ -938,7 +946,9 @@ static PyObject *Color_idiv(PyObject *v1, PyObject *v2)
     return nullptr;
   }
 
-  (void)BaseMath_WriteCallback(color);
+  if (BaseMath_WriteCallback(color) == -1) {
+    return nullptr;
+  }
   Py_INCREF(v1);
   return v1;
 }

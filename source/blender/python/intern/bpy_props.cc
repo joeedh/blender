@@ -22,6 +22,7 @@
 
 #include "BLI_array.hh"
 #include "BLI_listbase.hh"
+#include "BLI_threads.hh"
 #include "BLI_utildefines.hh"
 
 #include "bpy_capi_utils.hh"
@@ -31,6 +32,7 @@
 #include "RNA_access.hh"
 #include "RNA_define.hh" /* for defining our own rna */
 #include "RNA_enum_types.hh"
+#include "RNA_owned_curve.hh"
 #include "RNA_prototypes.hh"
 
 #include "MEM_guardedalloc.h"
@@ -415,6 +417,7 @@ static PyObject *pymeth_FloatVectorProperty = nullptr;
 static PyObject *pymeth_StringProperty = nullptr;
 static PyObject *pymeth_EnumProperty = nullptr;
 static PyObject *pymeth_PointerProperty = nullptr;
+static PyObject *pymeth_CurveMappingProperty = nullptr;
 static PyObject *pymeth_CollectionProperty = nullptr;
 static PyObject *pymeth_RemoveProperty = nullptr;
 
@@ -5427,6 +5430,133 @@ PyDoc_STRVAR(
     "(e.g. :class:`bpy.types.Scene.collection`, :class:`bpy.types.Material.node_tree`).\n"
     "   These should exclusively be referenced and accessed through their owner ID "
     "(e.g. the scene or material).\n");
+
+PyDoc_STRVAR(
+    BPy_curve_mapping_declaration_key_doc,
+    ".. function:: curve_mapping_declaration_key(type, identifier)\n"
+    "\n"
+    "   Return a positive process-local lifetime key for a directly declared owned curve.\n"
+    "   Main thread only. Missing, inherited-only and non-owned properties raise ValueError.\n"
+    "   Re-registration always creates a new key; no owner storage is allocated.\n"
+    "   Keys are runtime-only and must not be serialized.\n");
+static PyObject *BPy_curve_mapping_declaration_key(PyObject * /*self*/, PyObject *args)
+{
+  if (!BLI_thread_is_main()) {
+    PyErr_SetString(PyExc_RuntimeError, "Curve declaration access requires the main thread");
+    return nullptr;
+  }
+  PyObject *type, *identifier;
+  if (!PyArg_ParseTuple(args, "OO:curve_mapping_declaration_key", &type, &identifier)) {
+    return nullptr;
+  }
+  if (!PyType_Check(type) ||
+      !PyType_IsSubtype(reinterpret_cast<PyTypeObject *>(type), &pyrna_struct_Type) ||
+      reinterpret_cast<PyTypeObject *>(type)->tp_dict == nullptr ||
+      !PyUnicode_CheckExact(identifier))
+  {
+    PyErr_SetString(PyExc_TypeError, "Expected an RNA type and an exact string identifier");
+    return nullptr;
+  }
+  Py_ssize_t length;
+  const char *name = PyUnicode_AsUTF8AndSize(identifier, &length);
+  if (!name) {
+    return nullptr;
+  }
+  if (length == 0 || memchr(name, 0, size_t(length))) {
+    PyErr_SetString(PyExc_ValueError, "Identifier must be nonempty without NUL");
+    return nullptr;
+  }
+  PyObject *value = PyDict_GetItemString(reinterpret_cast<PyTypeObject *>(type)->tp_dict,
+                                         "bl_rna");
+  if (!value || !BPy_StructRNA_Check(value)) {
+    PyErr_SetString(PyExc_TypeError, "Expected a registered RNA type");
+    return nullptr;
+  }
+  auto *wrapper = reinterpret_cast<BPy_StructRNA *>(value);
+  if (!wrapper->ptr.has_value()) {
+    PyErr_SetString(PyExc_ReferenceError, "RNA type is no longer available");
+    return nullptr;
+  }
+  if (pyrna_struct_validity_check(wrapper) == -1) {
+    return nullptr;
+  }
+  if (wrapper->ptr->type != RNA_Struct || !wrapper->ptr->data) {
+    PyErr_SetString(PyExc_TypeError, "Expected valid RNA type metadata");
+    return nullptr;
+  }
+  StructRNA *srna = static_cast<StructRNA *>(wrapper->ptr->data);
+  if (RNA_struct_py_type_get(srna) != type) {
+    PyErr_SetString(PyExc_TypeError, "RNA metadata does not belong to this type");
+    return nullptr;
+  }
+  PropertyRNA *prop = RNA_struct_type_find_property_no_base(srna, UString(name));
+  OwnedCurveRNAErrorScope error;
+  uint64_t key;
+  if (!RNA_owned_curve_declaration_key(prop, key)) {
+    PyErr_SetString(PyExc_ValueError, error.message.c_str());
+    return nullptr;
+  }
+  return PyLong_FromUnsignedLongLong(key);
+}
+
+PyDoc_STRVAR(
+    BPy_CurveMappingProperty_doc,
+    ".. function:: CurveMappingProperty(*, name='', description='', update=None)\n"
+    "\n"
+    "   Declare a lazily initialized, ID-owned scalar CurveMapping on an ID or PropertyGroup.\n"
+    "   Values persist inside their owner, support deep copying and external brush assets,\n"
+    "   and remain None until explicitly initialized. No node tree backs this property.\n"
+    "   See the Owned Curve Mappings guide for lifecycle, caching and UI behavior.\n"
+    "   Availability is reported by bpy.props.owned_curve_mapping_api_version.\n"
+    "\n"
+    "   :param name: Human-readable property name.\n"
+    "   :type name: str\n"
+    "   :param description: Tooltip text.\n"
+    "   :type description: str\n"
+    "   :param update: Optional callback (declaring_parent, context), after owner notification.\n"
+    "   :type update: Callable | None\n"
+    "   :return: Deferred property declaration for registration.\n"
+    "   :rtype: _PropertyDeferred\n");
+static PyObject *BPy_CurveMappingProperty(PyObject *self, PyObject *args, PyObject *kw)
+{
+  PyObject *deferred_result;
+  StructRNA *srna = bpy_prop_deferred_data_or_srna(
+      self, args, kw, pymeth_CurveMappingProperty, &deferred_result);
+  if (!srna) {
+    return deferred_result;
+  }
+  if (!RNA_struct_is_ID(srna) && !RNA_struct_is_a(srna, RNA_PropertyGroup)) {
+    PyErr_SetString(PyExc_TypeError,
+                    "CurveMappingProperty requires an ID or PropertyGroup declaration");
+    return nullptr;
+  }
+  BPy_PropIDParse id_data{};
+  id_data.srna = srna;
+  const char *name = nullptr, *description = "";
+  PyObject *update_fn = nullptr;
+  static const char *keywords[] = {"attr", "name", "description", "update", nullptr};
+  static _PyArg_Parser parser = {"O&|$ssO:CurveMappingProperty", keywords, nullptr};
+  if (!_PyArg_ParseTupleAndKeywordsFast(
+          args, kw, &parser, bpy_prop_arg_parse_id, &id_data, &name, &description, &update_fn))
+  {
+    return nullptr;
+  }
+  if (bpy_prop_callback_check(update_fn, "update", 2) == -1) {
+    return nullptr;
+  }
+  if (id_data.prop_free_handle) {
+    RNA_def_property_free_identifier_deferred_finish(srna, id_data.prop_free_handle);
+  }
+  PropertyRNA *prop = RNA_def_pointer_runtime(
+      srna, id_data.value, RNA_CurveMapping, name ? name : id_data.value, description);
+  RNA_def_property_owned_curve(prop);
+  RNA_def_property_flag(prop, PROP_EDITABLE);
+  RNA_def_property_clear_flag(prop, PROP_ANIMATABLE);
+  bpy_prop_callback_assign_update(prop, update_fn);
+  RNA_def_property_duplicate_pointers(srna, prop);
+  Py_RETURN_NONE;
+}
+
 PyObject *BPy_PointerProperty(PyObject *self, PyObject *args, PyObject *kw)
 {
   StructRNA *srna;
@@ -5825,6 +5955,14 @@ static PyMethodDef props_methods[] = {
      reinterpret_cast<PyCFunction>(BPy_EnumProperty),
      METH_VARARGS | METH_KEYWORDS,
      BPy_EnumProperty_doc},
+    {"curve_mapping_declaration_key",
+     BPy_curve_mapping_declaration_key,
+     METH_VARARGS,
+     BPy_curve_mapping_declaration_key_doc},
+    {"CurveMappingProperty",
+     reinterpret_cast<PyCFunction>(BPy_CurveMappingProperty),
+     METH_VARARGS | METH_KEYWORDS,
+     BPy_CurveMappingProperty_doc},
     {"PointerProperty",
      reinterpret_cast<PyCFunction>(BPy_PointerProperty),
      METH_VARARGS | METH_KEYWORDS,
@@ -5902,6 +6040,13 @@ PyObject *BPY_rna_props()
   }
 
   submodule = PyModule_Create(&props_module);
+  if (!submodule) {
+    return nullptr;
+  }
+  if (PyModule_AddIntConstant(submodule, "owned_curve_mapping_api_version", 1) < 0) {
+    Py_DECREF(submodule);
+    return nullptr;
+  }
   PyDict_SetItemString(PyImport_GetModuleDict(), props_module.m_name, submodule);
 
   /* API needs the PyObjects internally. */
@@ -5918,6 +6063,7 @@ PyObject *BPY_rna_props()
   ASSIGN_STATIC(StringProperty);
   ASSIGN_STATIC(EnumProperty);
   ASSIGN_STATIC(PointerProperty);
+  ASSIGN_STATIC(CurveMappingProperty);
   ASSIGN_STATIC(CollectionProperty);
   ASSIGN_STATIC(RemoveProperty);
 

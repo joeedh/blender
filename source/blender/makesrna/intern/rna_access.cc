@@ -50,9 +50,11 @@
 #include "DEG_depsgraph.hh"
 #include "DEG_depsgraph_build.hh"
 
+#include "BKE_curvemapping_owned.hh"
 #include "RNA_access.hh"
 #include "RNA_define.hh"
 #include "RNA_enum_types.hh"
+#include "RNA_owned_curve.hh"
 #include "RNA_path.hh"
 #include "RNA_types.hh"
 
@@ -155,6 +157,7 @@ void rna_pointer_create_with_ancestors(const PointerRNA &parent,
       r_ptr = {parent.owner_id, type, data, parent};
     }
     rna_pointer_refine(r_ptr);
+    RNA_owned_curve_inherit(parent, r_ptr);
   }
   else {
     r_ptr = {};
@@ -576,7 +579,9 @@ void rna_property_rna_or_id_get(PropertyRNA *prop,
     if (prop->flag & PROP_IDPROPERTY) {
       IDProperty *idprop = rna_system_idproperty_find(ptr, prop->identifier.c_str());
 
-      if (idprop != nullptr && !rna_idproperty_verify_valid(ptr, prop, idprop)) {
+      if (idprop != nullptr && !RNA_property_is_owned_curve(prop) &&
+          !rna_idproperty_verify_valid(ptr, prop, idprop))
+      {
         IDProperty *group = RNA_struct_system_idprops(ptr, false);
 
         IDP_FreeFromGroup(group, idprop);
@@ -2535,6 +2540,13 @@ bool RNA_property_path_from_ID_check(PointerRNA *ptr, PropertyRNA *prop)
 static void rna_property_update(
     bContext *C, Main *bmain, Scene *scene, PointerRNA *ptr, PropertyRNA *prop)
 {
+  if (ptr->owned_curve) {
+    RNA_owned_curve_update(C, *ptr);
+    return;
+  }
+  if (RNA_property_is_owned_curve(prop)) {
+    return;
+  }
   const bool is_rna = (prop->magic == RNA_MAGIC);
   prop = rna_ensure_property(prop);
 
@@ -2668,6 +2680,9 @@ static bool property_boolean_get(PointerRNA *ptr, PropertyRNAOrID &prop_rna_or_i
 
 bool RNA_property_boolean_get(PointerRNA *ptr, PropertyRNA *prop)
 {
+  if (!RNA_owned_curve_validate(*ptr)) {
+    return false;
+  }
   BLI_assert(RNA_property_type(prop) == PROP_BOOLEAN);
 
   PropertyRNAOrID prop_rna_or_id;
@@ -2688,6 +2703,11 @@ bool RNA_property_boolean_get(PointerRNA *ptr, PropertyRNA *prop)
 
 void RNA_property_boolean_set(PointerRNA *ptr, PropertyRNA *prop, bool value)
 {
+  if (ptr->owned_curve) {
+    const double number = double(value);
+    RNA_owned_curve_set(*ptr, *prop, &number, 1);
+    return;
+  }
   BLI_assert(RNA_property_type(prop) == PROP_BOOLEAN);
 
   PropertyRNAOrID prop_rna_or_id;
@@ -3642,6 +3662,9 @@ static float property_float_get(PointerRNA *ptr, PropertyRNAOrID &prop_rna_or_id
 
 float RNA_property_float_get(PointerRNA *ptr, PropertyRNA *prop)
 {
+  if (!RNA_owned_curve_validate(*ptr)) {
+    return 0.0f;
+  }
   BLI_assert(RNA_property_type(prop) == PROP_FLOAT);
 
   PropertyRNAOrID prop_rna_or_id;
@@ -3662,6 +3685,11 @@ float RNA_property_float_get(PointerRNA *ptr, PropertyRNA *prop)
 
 void RNA_property_float_set(PointerRNA *ptr, PropertyRNA *prop, float value)
 {
+  if (ptr->owned_curve) {
+    const double number = double(value);
+    RNA_owned_curve_set(*ptr, *prop, &number, 1);
+    return;
+  }
   BLI_assert(RNA_property_type(prop) == PROP_FLOAT);
 
   PropertyRNAOrID prop_rna_or_id;
@@ -3799,6 +3827,10 @@ static void property_float_get_array(PointerRNA *ptr,
 
 void RNA_property_float_get_array(PointerRNA *ptr, PropertyRNA *prop, float *values)
 {
+  if (!RNA_owned_curve_validate(*ptr)) {
+    std::fill_n(values, RNA_property_array_length(ptr, prop), 0.0f);
+    return;
+  }
   BLI_assert(RNA_property_type(prop) == PROP_FLOAT);
   BLI_assert(RNA_property_array_check(prop) != false);
 
@@ -3904,6 +3936,15 @@ float RNA_property_float_get_index(PointerRNA *ptr, PropertyRNA *prop, int index
 
 void RNA_property_float_set_array(PointerRNA *ptr, PropertyRNA *prop, const float *values)
 {
+  if (ptr->owned_curve) {
+    const int size = RNA_property_array_length(ptr, prop);
+    Array<double> numbers(size);
+    for (int i = 0; i < size; i++) {
+      numbers[i] = values[i];
+    }
+    RNA_owned_curve_set(*ptr, *prop, numbers.data(), size);
+    return;
+  }
   BLI_assert(RNA_property_type(prop) == PROP_FLOAT);
 
   PropertyRNAOrID prop_rna_or_id;
@@ -4485,6 +4526,9 @@ static int property_enum_get(PointerRNA *ptr, PropertyRNAOrID &prop_rna_or_id)
 
 int RNA_property_enum_get(PointerRNA *ptr, PropertyRNA *prop)
 {
+  if (!RNA_owned_curve_validate(*ptr)) {
+    return 0;
+  }
   BLI_assert(RNA_property_type(prop) == PROP_ENUM);
 
   PropertyRNAOrID prop_rna_or_id;
@@ -4505,6 +4549,11 @@ int RNA_property_enum_get(PointerRNA *ptr, PropertyRNA *prop)
 
 void RNA_property_enum_set(PointerRNA *ptr, PropertyRNA *prop, int value)
 {
+  if (ptr->owned_curve) {
+    const double number = double(value);
+    RNA_owned_curve_set(*ptr, *prop, &number, 1);
+    return;
+  }
   BLI_assert(RNA_property_type(prop) == PROP_ENUM);
 
   PropertyRNAOrID prop_rna_or_id;
@@ -4604,6 +4653,12 @@ int RNA_property_enum_step(
 
 static PointerRNA property_pointer_get(PointerRNA *ptr, PropertyRNA *prop, const bool do_create)
 {
+  if (!RNA_owned_curve_validate(*ptr)) {
+    return {};
+  }
+  if (RNA_property_is_owned_curve(prop)) {
+    return RNA_owned_curve_get(*ptr, *prop);
+  }
   PointerPropertyRNA *pprop = reinterpret_cast<PointerPropertyRNA *>(prop);
   IDProperty *idprop;
 
@@ -4656,6 +4711,12 @@ void RNA_property_pointer_set(PointerRNA *ptr,
                               PointerRNA ptr_value,
                               ReportList *reports)
 {
+  if (RNA_property_is_owned_curve(prop)) {
+    OwnedCurveRNAErrorScope::report(
+        OwnedCurveRNAError::Invalid,
+        "Assign owned curve fields or explicitly initialize/unset the property");
+    return;
+  }
   /* Detect IDProperty and retrieve the actual PropertyRNA pointer before cast. */
   IDProperty *idprop = rna_idproperty_check(&prop, ptr);
 
@@ -4832,6 +4893,10 @@ PointerRNA RNA_property_pointer_get_default(Main &bmain, PointerRNA & /*ptr*/, P
 
 void RNA_property_pointer_add(PointerRNA *ptr, PropertyRNA *prop)
 {
+  if (RNA_property_is_owned_curve(prop)) {
+    RNA_owned_curve_initialize(*ptr, prop->identifier.c_str(), "LINEAR", nullptr);
+    return;
+  }
   // IDProperty *idprop;
 
   BLI_assert(RNA_property_type(prop) == PROP_POINTER);
@@ -4859,6 +4924,10 @@ void RNA_property_pointer_add(PointerRNA *ptr, PropertyRNA *prop)
 
 void RNA_property_pointer_remove(PointerRNA *ptr, PropertyRNA *prop)
 {
+  if (RNA_property_is_owned_curve(prop)) {
+    RNA_owned_curve_unset(*ptr, *prop, nullptr);
+    return;
+  }
   IDProperty *idprop, *group;
 
   BLI_assert(RNA_property_type(prop) == PROP_POINTER);
@@ -4890,6 +4959,16 @@ void RNA_property_collection_begin(PointerRNA *ptr,
                                    PropertyRNA *prop,
                                    CollectionPropertyIterator *iter)
 {
+  if (!RNA_owned_curve_validate(*ptr)) {
+    *iter = {};
+    return;
+  }
+  PointerRNA owned_parent;
+  if (ptr->owned_curve) {
+    owned_parent = *ptr;
+    RNA_owned_curve_pin(owned_parent);
+    ptr = &owned_parent;
+  }
   IDProperty *idprop;
 
   BLI_assert(RNA_property_type(prop) == PROP_COLLECTION);
@@ -4928,6 +5007,10 @@ void RNA_property_collection_begin(PointerRNA *ptr,
 
 void RNA_property_collection_next(CollectionPropertyIterator *iter)
 {
+  if (!RNA_owned_curve_validate(iter->parent)) {
+    iter->valid = false;
+    return;
+  }
   CollectionPropertyRNA *cprop = reinterpret_cast<CollectionPropertyRNA *>(
       rna_ensure_property(iter->prop));
 
@@ -4949,7 +5032,9 @@ void RNA_property_collection_skip(CollectionPropertyIterator *iter, int num)
       rna_ensure_property(iter->prop));
   int i;
 
-  if (num > 1 && (iter->idprop || (cprop->flag_internal & PROP_INTERN_RAW_ARRAY))) {
+  if (!iter->parent.owned_curve && num > 1 &&
+      (iter->idprop || (cprop->flag_internal & PROP_INTERN_RAW_ARRAY)))
+  {
     /* fast skip for array */
     ArrayIterator *internal = &iter->internal.array;
 
@@ -4984,6 +5069,9 @@ void RNA_property_collection_end(CollectionPropertyIterator *iter)
 
 int RNA_property_collection_length(PointerRNA *ptr, PropertyRNA *prop)
 {
+  if (!RNA_owned_curve_validate(*ptr)) {
+    return 0;
+  }
   CollectionPropertyRNA *cprop = reinterpret_cast<CollectionPropertyRNA *>(prop);
   IDProperty *idprop;
 
@@ -5142,6 +5230,7 @@ bool RNA_property_collection_remove(PointerRNA *ptr, PropertyRNA *prop, int key)
       }
 
       if (key + 1 < len) {
+        bke::owned_curve_structure_changed(idprop);
         /* move element to be removed to the back */
         memcpy(&tmp, &array[key], sizeof(IDProperty));
         memmove(array + key, array + key + 1, sizeof(IDProperty) * (len - (key + 1)));
@@ -5187,6 +5276,7 @@ eRNAStatus RNA_property_collection_move(PointerRNA *ptr,
     }
 
     if (src_index != dst_index) {
+      bke::owned_curve_structure_changed(idprop);
       IDProperty tmp;
       memcpy(&tmp, &array[src_index], sizeof(IDProperty));
       if (dst_index < src_index) {
@@ -5229,6 +5319,7 @@ void RNA_property_collection_clear(PointerRNA *ptr, PropertyRNA *prop)
       IDProperty tmp, *array = IDP_property_array_get(idprop);
       for (int i = 0; i < len; i++) {
         if ((array[i].flag & IDP_FLAG_OVERRIDELIBRARY_LOCAL) != 0) {
+          bke::owned_curve_structure_changed(idprop);
           memcpy(&tmp, &array[i], sizeof(IDProperty));
           memmove(array + i, array + i + 1, sizeof(IDProperty) * (len - (i + 1)));
           memcpy(&array[len - 1], &tmp, sizeof(IDProperty));
@@ -5303,6 +5394,9 @@ bool RNA_property_collection_lookup_int(PointerRNA *ptr,
                                         int key,
                                         PointerRNA *r_ptr)
 {
+  if (!RNA_owned_curve_validate(*ptr)) {
+    return false;
+  }
   CollectionPropertyRNA *cprop = reinterpret_cast<CollectionPropertyRNA *>(
       rna_ensure_property(prop));
   BLI_assert(rna_property_can_access_pointer_data(*ptr, *cprop));
@@ -5437,6 +5531,11 @@ std::optional<PointerRNA> RNA_property_collection_type_get(PointerRNA *ptr, Prop
 int RNA_property_collection_raw_array(
     PointerRNA *ptr, PropertyRNA *prop, PropertyRNA *itemprop, bool set, RawArray *array)
 {
+  if (ptr->owned_curve) {
+    OwnedCurveRNAErrorScope::report(OwnedCurveRNAError::Invalid,
+                                    "Owned curves do not support raw collection access");
+    return 0;
+  }
   CollectionPropertyIterator iter;
   ArrayIterator *internal;
   char *arrayp;
@@ -5997,6 +6096,11 @@ int RNA_property_collection_raw_get(ReportList *reports,
                                     RawPropertyType type,
                                     int len)
 {
+  if (ptr->owned_curve) {
+    OwnedCurveRNAErrorScope::report(OwnedCurveRNAError::Invalid,
+                                    "Owned curves do not support raw collection access");
+    return 0;
+  }
   return rna_raw_access(reports, ptr, prop, propname, array, type, len, 0);
 }
 
@@ -6008,6 +6112,11 @@ int RNA_property_collection_raw_set(ReportList *reports,
                                     RawPropertyType type,
                                     int len)
 {
+  if (ptr->owned_curve) {
+    OwnedCurveRNAErrorScope::report(OwnedCurveRNAError::Invalid,
+                                    "Owned curves do not support raw collection access");
+    return 0;
+  }
   return rna_raw_access(reports, ptr, prop, propname, array, type, len, 1);
 }
 
@@ -7137,6 +7246,10 @@ bool RNA_property_is_set(PointerRNA *ptr, PropertyRNA *prop)
 
 void RNA_property_unset(PointerRNA *ptr, PropertyRNA *prop)
 {
+  if (RNA_property_is_owned_curve(prop)) {
+    RNA_owned_curve_unset(*ptr, *prop, nullptr);
+    return;
+  }
   prop = rna_ensure_property(prop);
   if (prop->flag & PROP_IDPROPERTY) {
     rna_system_idproperty_free(ptr, prop->identifier.c_str());

@@ -34,6 +34,9 @@
 #include "UI_interface.hh" /* For things like UI_PRECISION_FLOAT_MAX... */
 
 #include "RNA_define.hh"
+#ifdef RNA_RUNTIME
+#  include "RNA_owned_curve.hh"
+#endif
 #include "RNA_types.hh"
 
 #include "rna_internal.hh"
@@ -4700,9 +4703,10 @@ FunctionRNA *RNA_def_function(StructRNA *srna, const char *identifier_c_str, con
 
   const UString identifier(identifier_c_str);
 
-  if (std::find_if(srna->functions.begin(), srna->functions.end(), [&](const auto &func) {
-        return func->identifier == identifier;
-      }) != srna->functions.end())
+  if (std::find_if(srna->functions.begin(),
+                   srna->functions.end(),
+                   [&](const auto &func) { return func->identifier == identifier; }) !=
+      srna->functions.end())
   {
     CLOG_ERROR(&LOG, "%s.%s already defined.", srna->identifier.c_str(), identifier.c_str());
     return nullptr;
@@ -5074,8 +5078,16 @@ void RNA_def_property_free_pointers_set_py_data_callback(
   g_py_data_clear_fn = py_data_clear_fn;
 }
 
+void RNA_def_property_owned_curve(PropertyRNA *prop)
+{
+  prop->flag_internal |= PROP_INTERN_OWNED_CURVE;
+}
+
 void RNA_def_property_free_pointers(PropertyRNA *prop)
 {
+#  ifdef RNA_RUNTIME
+  RNA_owned_curve_declaration_removed(prop);
+#  endif
   if (prop->flag_internal & PROP_INTERN_FREE_POINTERS) {
     int a;
 

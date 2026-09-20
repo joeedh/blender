@@ -48,7 +48,9 @@
 #include "RNA_access.hh"
 #include "RNA_define.hh" /* RNA_def_property_free_identifier */
 #include "RNA_enum_types.hh"
+#include "RNA_owned_curve.hh"
 #include "RNA_prototypes.hh"
+#include <cmath>
 
 #include "CLG_log.h"
 
@@ -172,9 +174,71 @@ static PyObject *pyweakref_get_ref(PyObject *ref)
   "\n" \
   "      Limited to: :ref:`bpy_types-custom_properties`.\n"
 
+static int pyrna_owned_curve_error(const OwnedCurveRNAErrorScope &scope)
+{
+  if (scope.code == OwnedCurveRNAError::None) {
+    return 0;
+  }
+  PyObject *type = scope.code == OwnedCurveRNAError::Stale    ? PyExc_ReferenceError :
+                   scope.code == OwnedCurveRNAError::ReadOnly ? PyExc_PermissionError :
+                                                                PyExc_ValueError;
+  PyErr_SetString(type, scope.message.c_str());
+  return -1;
+}
+
+/** Normalize once, before generic RNA conversion can clamp NaN/Inf or overflow. */
+static PyObject *pyrna_owned_curve_number(PyObject *value, const bool array)
+{
+  if (array) {
+    PyObject *sequence = PySequence_Fast(value, "Expected a numeric sequence");
+    if (!sequence) {
+      return nullptr;
+    }
+    const Py_ssize_t size = PySequence_Fast_GET_SIZE(sequence);
+    PyObject *result = PyTuple_New(size);
+    if (!result) {
+      Py_DECREF(sequence);
+      return nullptr;
+    }
+    for (Py_ssize_t i = 0; i < size; i++) {
+      PyObject *item = pyrna_owned_curve_number(PySequence_Fast_GET_ITEM(sequence, i), false);
+      if (!item) {
+        Py_DECREF(sequence);
+        Py_DECREF(result);
+        return nullptr;
+      }
+      PyTuple_SET_ITEM(result, i, item);
+    }
+    Py_DECREF(sequence);
+    return result;
+  }
+  const double number = PyFloat_AsDouble(value);
+  if (PyErr_Occurred()) {
+    return nullptr;
+  }
+  if (!std::isfinite(number) || std::abs(number) > FLT_MAX) {
+    PyErr_SetString(PyExc_ValueError, "Owned CurveMapping requires finite float32 numbers");
+    return nullptr;
+  }
+  return PyFloat_FromDouble(number);
+}
+struct OwnedCurvePyNumber {
+  PyObject *value = nullptr;
+  ~OwnedCurvePyNumber()
+  {
+    Py_XDECREF(value);
+  }
+};
+
+int pyrna_pointer_validity_check_only(const PointerRNA *ptr)
+{
+  OwnedCurveRNAErrorScope scope;
+  return ptr->has_type() && RNA_owned_curve_validate(*const_cast<PointerRNA *>(ptr)) ? 0 : -1;
+}
+
 int pyrna_struct_validity_check_only(const BPy_StructRNA *pysrna)
 {
-  if (pysrna->ptr->has_type()) {
+  if (pyrna_pointer_validity_check_only(&pysrna->ptr.value()) == 0) {
     return 0;
   }
   return -1;
@@ -188,7 +252,7 @@ void pyrna_struct_validity_exception_only(const BPy_StructRNA *pysrna)
 
 int pyrna_struct_validity_check(const BPy_StructRNA *pysrna)
 {
-  if (pysrna->ptr->has_type()) {
+  if (pyrna_pointer_validity_check_only(&pysrna->ptr.value()) == 0) {
     return 0;
   }
   pyrna_struct_validity_exception_only(pysrna);
@@ -197,7 +261,7 @@ int pyrna_struct_validity_check(const BPy_StructRNA *pysrna)
 
 int pyrna_prop_validity_check(const BPy_PropertyRNA *self)
 {
-  if (self->ptr->has_type()) {
+  if (pyrna_pointer_validity_check_only(&self->ptr.value()) == 0) {
     return 0;
   }
   PyErr_Format(PyExc_ReferenceError,
@@ -617,10 +681,20 @@ static int mathutils_rna_vector_get(BaseMathObject *bmo, int subtype)
 
 static int mathutils_rna_vector_set(BaseMathObject *bmo, int subtype)
 {
+  OwnedCurveRNAErrorScope owned_scope;
   BPy_PropertyRNA *self = reinterpret_cast<BPy_PropertyRNA *>(bmo->cb_user);
   float min, max;
 
   PYRNA_PROP_CHECK_INT(self);
+  if (self->ptr->owned_curve) {
+    const int size = RNA_property_array_length(&self->ptr.value(), self->prop);
+    for (int i = 0; i < size; i++) {
+      if (!std::isfinite(bmo->data[i])) {
+        PyErr_SetString(PyExc_ValueError, "Owned curve mathutils values must be finite");
+        return -1;
+      }
+    }
+  }
 
   if (self->prop == nullptr) {
     return -1;
@@ -650,6 +724,9 @@ static int mathutils_rna_vector_set(BaseMathObject *bmo, int subtype)
   }
 
   RNA_property_float_set_array(&self->ptr.value(), self->prop, bmo->data);
+  if (pyrna_owned_curve_error(owned_scope) < 0) {
+    return -1;
+  }
   if (RNA_property_update_check(self->prop)) {
     RNA_property_update(BPY_context_get(), &self->ptr.value(), self->prop);
   }
@@ -686,9 +763,19 @@ static int mathutils_rna_vector_get_index(BaseMathObject *bmo, int /*subtype*/, 
 
 static int mathutils_rna_vector_set_index(BaseMathObject *bmo, int /*subtype*/, int index)
 {
+  OwnedCurveRNAErrorScope owned_scope;
   BPy_PropertyRNA *self = reinterpret_cast<BPy_PropertyRNA *>(bmo->cb_user);
 
   PYRNA_PROP_CHECK_INT(self);
+  if (self->ptr->owned_curve) {
+    const int size = RNA_property_array_length(&self->ptr.value(), self->prop);
+    for (int i = 0; i < size; i++) {
+      if (!std::isfinite(bmo->data[i])) {
+        PyErr_SetString(PyExc_ValueError, "Owned curve mathutils values must be finite");
+        return -1;
+      }
+    }
+  }
 
   if (self->prop == nullptr) {
     return -1;
@@ -711,6 +798,9 @@ static int mathutils_rna_vector_set_index(BaseMathObject *bmo, int /*subtype*/, 
   RNA_property_float_clamp(&self->ptr.value(), self->prop, &bmo->data[index]);
   RNA_property_float_set_index(&self->ptr.value(), self->prop, index, bmo->data[index]);
 
+  if (pyrna_owned_curve_error(owned_scope) < 0) {
+    return -1;
+  }
   if (RNA_property_update_check(self->prop)) {
     RNA_property_update(BPY_context_get(), &self->ptr.value(), self->prop);
   }
@@ -991,15 +1081,18 @@ PyObject *pyrna_math_object_from_array(PointerRNA *ptr, PropertyRNA *prop)
 
 static int pyrna_struct_compare(BPy_StructRNA *a, BPy_StructRNA *b)
 {
-  return (((a->ptr->data == b->ptr->data) && (a->ptr->type == b->ptr->type)) ? 0 : -1);
+  return (
+      (RNA_owned_curve_equal(a->ptr.value(), b->ptr.value()) && (a->ptr->type == b->ptr->type)) ?
+          0 :
+          -1);
 }
 
 static int pyrna_prop_compare(BPy_PropertyRNA *a, BPy_PropertyRNA *b)
 {
-  return (
-      ((a->prop == b->prop) && (a->ptr->data == b->ptr->data) && (a->ptr->type == b->ptr->type)) ?
-          0 :
-          -1);
+  return (((a->prop == b->prop) && RNA_owned_curve_equal(a->ptr.value(), b->ptr.value()) &&
+           (a->ptr->type == b->ptr->type)) ?
+              0 :
+              -1);
 }
 
 static PyObject *pyrna_struct_richcmp(PyObject *a, PyObject *b, int op)
@@ -1299,7 +1392,8 @@ static PyObject *pyrna_func_repr(BPy_FunctionRNA *self)
 
 static Py_hash_t pyrna_struct_hash(BPy_StructRNA *self)
 {
-  return Py_HashPointer(self->ptr->data);
+  return (self->ptr->owned_curve ? Py_hash_t(RNA_owned_curve_hash(self->ptr.value()) >> 4) :
+                                   Py_HashPointer(self->ptr->data));
 }
 
 /* From Python's meth_hash v3.1.2. */
@@ -1310,7 +1404,8 @@ static long pyrna_prop_hash(BPy_PropertyRNA *self)
     x = 0;
   }
   else {
-    x = Py_HashPointer(self->ptr->data);
+    x = (self->ptr->owned_curve ? Py_hash_t(RNA_owned_curve_hash(self->ptr.value()) >> 4) :
+                                  Py_HashPointer(self->ptr->data));
     if (x == -1) {
       return -1;
     }
@@ -1586,7 +1681,11 @@ PyObject *pyrna_prop_to_py(PointerRNA *ptr, PropertyRNA *prop)
     }
     case PROP_POINTER: {
       PointerRNA newptr;
+      OwnedCurveRNAErrorScope owned_scope;
       newptr = RNA_property_pointer_get(ptr, prop);
+      if (pyrna_owned_curve_error(owned_scope) < 0) {
+        return nullptr;
+      }
       if (newptr) {
         ret = pyrna_struct_CreatePyObject(&newptr);
       }
@@ -1683,8 +1782,26 @@ int pyrna_pydict_to_props(PointerRNA *ptr,
 static int pyrna_py_to_prop(
     PointerRNA *ptr, PropertyRNA *prop, void *data, PyObject *value, const char *error_prefix)
 {
+  OwnedCurveRNAErrorScope owned_scope;
   /* XXX hard limits should be checked here. */
   const int type = RNA_property_type(prop);
+  const bool owned_target = bool(ptr->owned_curve);
+  OwnedCurvePyNumber normalized;
+  if (type == PROP_FLOAT &&
+      (ptr->owned_curve || OwnedCurveRNAErrorScope::finite_numbers_required()))
+  {
+    normalized.value = pyrna_owned_curve_number(value, RNA_property_array_check(prop));
+    if (!normalized.value) {
+      return -1;
+    }
+    value = normalized.value;
+    if (owned_target &&
+        (!ptr->has_type() || !ptr->owned_curve || pyrna_pointer_validity_check_only(ptr) < 0))
+    {
+      PyErr_SetString(PyExc_ReferenceError, "Owned curve changed during numeric conversion");
+      return -1;
+    }
+  }
 
   if (const DeprecatedRNA *deprecated = RNA_property_deprecated(prop)) {
     pyrna_prop_warn_deprecated(ptr, prop, deprecated);
@@ -1717,6 +1834,12 @@ static int pyrna_py_to_prop(
           }
         }
 
+        if (owned_target &&
+            (!ptr->has_type() || !ptr->owned_curve || pyrna_pointer_validity_check_only(ptr) < 0))
+        {
+          PyErr_SetString(PyExc_ReferenceError, "Owned curve changed during boolean conversion");
+          return -1;
+        }
         if (param == -1) {
           PyErr_Format(PyExc_TypeError,
                        "%.200s %.200s.%.200s expected True/False or 0/1, not %.200s",
@@ -2263,6 +2386,9 @@ static int pyrna_py_to_prop(
   }
 
   /* Run RNA property functions. */
+  if (pyrna_owned_curve_error(owned_scope) < 0) {
+    return -1;
+  }
   if (RNA_property_update_check(prop)) {
     RNA_property_update(BPY_context_get(), ptr, prop);
   }
@@ -2278,9 +2404,25 @@ static PyObject *pyrna_prop_array_to_py_index(BPy_PropertyArrayRNA *self, int in
 
 static int pyrna_py_to_prop_array_index(BPy_PropertyArrayRNA *self, int index, PyObject *value)
 {
+  OwnedCurveRNAErrorScope owned_scope;
   int ret = 0;
   PointerRNA *ptr = &self->ptr.value();
   PropertyRNA *prop = self->prop;
+  const bool owned_target = bool(ptr->owned_curve);
+  OwnedCurvePyNumber normalized;
+  if (ptr->owned_curve && RNA_property_type(prop) == PROP_FLOAT) {
+    normalized.value = pyrna_owned_curve_number(value, false);
+    if (!normalized.value) {
+      return -1;
+    }
+    value = normalized.value;
+    if (owned_target &&
+        (!ptr->has_type() || !ptr->owned_curve || pyrna_pointer_validity_check_only(ptr) < 0))
+    {
+      PyErr_SetString(PyExc_ReferenceError, "Owned curve changed during numeric conversion");
+      return -1;
+    }
+  }
 
   const int totdim = RNA_property_array_dimension(ptr, prop, nullptr);
 
@@ -2341,6 +2483,9 @@ static int pyrna_py_to_prop_array_index(BPy_PropertyArrayRNA *self, int index, P
   }
 
   /* Run RNA property functions. */
+  if (pyrna_owned_curve_error(owned_scope) < 0) {
+    return -1;
+  }
   if (RNA_property_update_check(prop)) {
     RNA_property_update(BPY_context_get(), ptr, prop);
   }
@@ -3237,6 +3382,22 @@ static int prop_subscript_ass_array_slice(PointerRNA *ptr,
                                           int array_length,
                                           PyObject *value_orig)
 {
+  const bool owned_target = bool(ptr->owned_curve);
+  OwnedCurvePyNumber normalized;
+  if (value_orig && owned_target && RNA_property_type(prop) == PROP_FLOAT) {
+    normalized.value = pyrna_owned_curve_number(value_orig, true);
+    if (!normalized.value) {
+      return -1;
+    }
+    value_orig = normalized.value;
+    if (owned_target &&
+        (!ptr->has_type() || !ptr->owned_curve || pyrna_pointer_validity_check_only(ptr) < 0))
+    {
+      PyErr_SetString(PyExc_ReferenceError, "Owned curve changed during numeric conversion");
+      return -1;
+    }
+  }
+  OwnedCurveRNAErrorScope owned_scope;
   /* For `step == 1` the targeted chunks are contiguous in memory,
    * so a single recursive call with `dimsize[arraydim] = slice_length` writes the whole range
    * in one descent. Otherwise each chunk is written individually with `dimsize[arraydim] = 1`,
@@ -3440,6 +3601,9 @@ static int prop_subscript_ass_array_slice(PointerRNA *ptr,
     PyMem_FREE(values_alloc);
   }
 
+  if (pyrna_owned_curve_error(owned_scope) < 0) {
+    return -1;
+  }
   return ret;
 }
 
@@ -3905,6 +4069,110 @@ PyDoc_STRVAR(
     "\n"
     "   :param property: Property name.\n"
     "   :type property: str\n");
+
+PyDoc_STRVAR(
+    pyrna_struct_curve_mapping_initialize_doc,
+    ".. method:: curve_mapping_initialize(property, *, preset='LINEAR')\n"
+    "\n"
+    "   Initialize an owned scalar curve, staging absent pointer ancestors atomically.\n"
+    "   Existing definitions are returned unchanged. Reading an unset property returns None.\n"
+    "\n"
+    "   :param property: Declared property path; collections require existing numeric indices.\n"
+    "   :type property: str\n"
+    "   :param preset: Initial preset; currently LINEAR only.\n"
+    "   :type preset: str\n"
+    "   :return: The owned curve.\n"
+    "   :rtype: :class:`CurveMapping`\n");
+PyDoc_STRVAR(
+    pyrna_struct_curve_mapping_sync_doc,
+    ".. method:: curve_mapping_sync(property, /)\n"
+    "\n"
+    "   Validate and publish raw owned-definition edits. Invalid data remains untouched.\n"
+    "   Changed definitions notify their owner and callback; unchanged sync does neither.\n"
+    "\n"
+    "   :param property: Declared owned-curve path with existing numeric collection indices.\n"
+    "   :type property: str\n");
+PyDoc_STRVAR(
+    pyrna_struct_curve_mapping_cache_key_doc,
+    ".. method:: curve_mapping_cache_key()\n"
+    "\n"
+    "   Return a validated, immutable (runtime record identity, definition revision) key.\n"
+    "   Only owned CurveMapping instances support this method. Call it before cache reuse.\n"
+    "   Presentation/no-op edits preserve the key; committed definition edits advance it.\n"
+    "   Keys are process-local and must not be saved or used after an access error.\n"
+    "   New records after copy/load/unset have new identities; re-registration may reuse a "
+    "record.\n"
+    "\n"
+    "   :return: Two exact unsigned integer values.\n"
+    "   :rtype: tuple[int, int]\n");
+
+static PyObject *pyrna_struct_curve_mapping_cache_key(BPy_StructRNA *self, PyObject * /*args*/)
+{
+  PYRNA_STRUCT_CHECK_OBJ(self);
+  OwnedCurveRNAErrorScope scope;
+  uint64_t identity, revision;
+  if (!RNA_owned_curve_cache_key(self->ptr.value(), identity, revision)) {
+    pyrna_owned_curve_error(scope);
+    return nullptr;
+  }
+  PyObject *identity_object = PyLong_FromUnsignedLongLong(identity);
+  if (!identity_object) {
+    return nullptr;
+  }
+  PyObject *revision_object = PyLong_FromUnsignedLongLong(revision);
+  if (!revision_object) {
+    Py_DECREF(identity_object);
+    return nullptr;
+  }
+  PyObject *result = PyTuple_Pack(2, identity_object, revision_object);
+  Py_DECREF(identity_object);
+  Py_DECREF(revision_object);
+  return result;
+}
+
+static PyObject *pyrna_struct_curve_mapping_initialize(BPy_StructRNA *self,
+                                                       PyObject *args,
+                                                       PyObject *kw)
+{
+  PYRNA_STRUCT_CHECK_OBJ(self);
+  const char *path, *preset = "LINEAR";
+  static const char *keywords[] = {"property", "preset", nullptr};
+  if (!PyArg_ParseTupleAndKeywords(args,
+                                   kw,
+                                   "s|$s:curve_mapping_initialize",
+                                   const_cast<char **>(keywords),
+                                   &path,
+                                   &preset))
+  {
+    return nullptr;
+  }
+  OwnedCurveRNAErrorScope scope;
+  PointerRNA result = RNA_owned_curve_initialize(
+      self->ptr.value(), path, preset, BPY_context_get());
+  if (pyrna_owned_curve_error(scope) < 0) {
+    return nullptr;
+  }
+  if (!RNA_owned_curve_validate(result)) {
+    pyrna_owned_curve_error(scope);
+    return nullptr;
+  }
+  return pyrna_struct_CreatePyObject(&result);
+}
+static PyObject *pyrna_struct_curve_mapping_sync(BPy_StructRNA *self, PyObject *args)
+{
+  PYRNA_STRUCT_CHECK_OBJ(self);
+  const char *path;
+  if (!PyArg_ParseTuple(args, "s:curve_mapping_sync", &path)) {
+    return nullptr;
+  }
+  OwnedCurveRNAErrorScope scope;
+  RNA_owned_curve_sync(self->ptr.value(), path, BPY_context_get());
+  if (pyrna_owned_curve_error(scope) < 0) {
+    return nullptr;
+  }
+  Py_RETURN_NONE;
+}
+
 static PyObject *pyrna_struct_property_unset(BPy_StructRNA *self, PyObject *args)
 {
   PropertyRNA *prop;
@@ -3928,7 +4196,16 @@ static PyObject *pyrna_struct_property_unset(BPy_StructRNA *self, PyObject *args
     return nullptr;
   }
 
-  RNA_property_unset(&self->ptr.value(), prop);
+  if (RNA_property_is_owned_curve(prop)) {
+    OwnedCurveRNAErrorScope scope;
+    RNA_owned_curve_unset(self->ptr.value(), *prop, BPY_context_get());
+    if (pyrna_owned_curve_error(scope) < 0) {
+      return nullptr;
+    }
+  }
+  else {
+    RNA_property_unset(&self->ptr.value(), prop);
+  }
 
   Py_RETURN_NONE;
 }
@@ -6099,6 +6376,10 @@ static bool foreach_compat_buffer(RawPropertyType raw_type, int attr_signed, con
 
 static PyObject *foreach_getset(BPy_PropertyRNA *self, PyObject *args, int set)
 {
+  if (self->ptr->owned_curve) {
+    PyErr_SetString(PyExc_TypeError, "Owned curve collections do not support foreach_get/set");
+    return nullptr;
+  }
   PyObject *item = nullptr;
   int i = 0, ok = 0;
   bool buffer_is_compat;
@@ -6361,6 +6642,10 @@ static PyObject *pyprop_array_foreach_getset(BPy_PropertyArrayRNA *self,
                                              PyObject *args,
                                              const bool do_set)
 {
+  if (self->ptr->owned_curve) {
+    PyErr_SetString(PyExc_TypeError, "Owned curve arrays do not support foreach_get/set");
+    return nullptr;
+  }
   PyObject *item = nullptr;
   Py_ssize_t i, seq_size, size;
   void *array = nullptr;
@@ -6650,6 +6935,18 @@ static PyMethodDef pyrna_struct_methods[] = {
      reinterpret_cast<PyCFunction>(pyrna_struct_is_property_set),
      METH_VARARGS | METH_KEYWORDS,
      pyrna_struct_is_property_set_doc},
+    {"curve_mapping_initialize",
+     reinterpret_cast<PyCFunction>(pyrna_struct_curve_mapping_initialize),
+     METH_VARARGS | METH_KEYWORDS,
+     pyrna_struct_curve_mapping_initialize_doc},
+    {"curve_mapping_sync",
+     reinterpret_cast<PyCFunction>(pyrna_struct_curve_mapping_sync),
+     METH_VARARGS,
+     pyrna_struct_curve_mapping_sync_doc},
+    {"curve_mapping_cache_key",
+     reinterpret_cast<PyCFunction>(pyrna_struct_curve_mapping_cache_key),
+     METH_NOARGS,
+     pyrna_struct_curve_mapping_cache_key_doc},
     {"property_unset",
      reinterpret_cast<PyCFunction>(pyrna_struct_property_unset),
      METH_VARARGS,
@@ -6983,6 +7280,13 @@ static PyObject *pyrna_param_to_py(PointerRNA *ptr, PropertyRNA *prop, void *dat
           newptr_p = &newptr;
         }
 
+        if (newptr_p->owned_curve) {
+          OwnedCurveRNAErrorScope scope;
+          if (!RNA_owned_curve_validate(*newptr_p)) {
+            pyrna_owned_curve_error(scope);
+            return nullptr;
+          }
+        }
         if (*newptr_p) {
           ret = pyrna_struct_CreatePyObject(newptr_p);
         }
@@ -7076,6 +7380,16 @@ static PyObject *pyrna_func_vectorcall(PyObject *callable,
   BPy_FunctionRNA *self = reinterpret_cast<BPy_FunctionRNA *>(callable);
   PointerRNA *self_ptr = &self->ptr.value();
   FunctionRNA *self_func = self->func;
+  OwnedCurveRNAErrorScope owned_scope;
+  owned_scope.require_finite_numbers = bool(self_ptr->owned_curve);
+  if (!self_ptr->has_type()) {
+    PyErr_SetString(PyExc_ReferenceError, "RNA function owner was removed");
+    return nullptr;
+  }
+  if (!RNA_owned_curve_validate(*self_ptr)) {
+    pyrna_owned_curve_error(owned_scope);
+    return nullptr;
+  }
 
   ParameterList parms;
   ParameterIterator iter;
@@ -7223,6 +7537,13 @@ static PyObject *pyrna_func_vectorcall(PyObject *callable,
       char error_prefix[512];
 
       err = pyrna_py_to_prop(&funcptr, parm, iter.data, item, "");
+      if (owned_scope.require_finite_numbers && (!self_ptr->has_type() || !self_ptr->owned_curve ||
+                                                 pyrna_pointer_validity_check_only(self_ptr) < 0))
+      {
+        PyErr_SetString(PyExc_ReferenceError, "Owned curve changed during argument conversion");
+        err = -1;
+        break;
+      }
 
       if (err != 0) {
         PyErr_Clear(); /* Re-raise. */
@@ -7257,8 +7578,8 @@ static PyObject *pyrna_func_vectorcall(PyObject *callable,
       arg_name = PyUnicode_AsUTF8(key);
       found = false;
 
-      if (arg_name == nullptr)
-      { /* Unlikely the `arg_name` is not a string, but ignore if it is. */
+      if (arg_name ==
+          nullptr) { /* Unlikely the `arg_name` is not a string, but ignore if it is. */
         PyErr_Clear();
       }
       else {
@@ -7324,9 +7645,22 @@ static PyObject *pyrna_func_vectorcall(PyObject *callable,
     /* No need to print any reports. We will turn errors into Python exceptions, and
      * Python API calls should be silent and not print info or warning messages. */
     BKE_reports_init(&reports, RPT_STORE | RPT_PRINT_HANDLED_BY_OWNER);
-    RNA_function_call(C, &reports, self_ptr, self_func, &parms);
+    const bool owned_call = owned_scope.require_finite_numbers;
+    owned_scope.require_finite_numbers = false;
+    if (owned_call &&
+        (!self_ptr->has_type() || !self_ptr->owned_curve || !RNA_owned_curve_validate(*self_ptr)))
+    {
+      OwnedCurveRNAErrorScope::report(OwnedCurveRNAError::Stale,
+                                      "Owned curve changed during argument conversion");
+    }
+    else {
+      RNA_function_call(C, &reports, self_ptr, self_func, &parms);
+    }
 
     err = BPy_reports_to_error(&reports, PyExc_RuntimeError, true);
+    if (pyrna_owned_curve_error(owned_scope) < 0) {
+      err = -1;
+    }
 
     /* Return value. */
     if (err != -1) {
@@ -8332,7 +8666,12 @@ static PyObject *pyrna_prop_collection_iter_next(PyObject *self)
 {
   BPy_PropertyCollectionIterRNA *self_property = reinterpret_cast<BPy_PropertyCollectionIterRNA *>(
       self);
-  if (self_property->iter->valid == false) {
+  OwnedCurveRNAErrorScope owned_scope;
+  if (self_property->iter.has_value() && !RNA_owned_curve_validate(self_property->iter->parent)) {
+    pyrna_owned_curve_error(owned_scope);
+    return nullptr;
+  }
+  if (!self_property->iter.has_value() || self_property->iter->valid == false) {
     /* Free collection iterator immediately before tp_dealloc, to break cycles the GC can not
      * solve, between e.g. USE_PYRNA_STRUCT_REFERENCE and RNA_DepsgraphIterator.py_instance. */
     if (self_property->iter.has_value()) {
@@ -9676,11 +10015,10 @@ static int rna_function_register_arg_count(FunctionRNA *func, int *min_count)
 #if defined(__SANITIZE_ADDRESS__) && defined(_MSC_VER) && !defined(__clang__)
 __declspec(no_sanitize_address)
 #endif
-static int
-bpy_class_validate_recursive(PointerRNA *dummy_ptr,
-                             StructRNA *srna,
-                             void *py_data,
-                             bool *have_function)
+static int bpy_class_validate_recursive(PointerRNA *dummy_ptr,
+                                        StructRNA *srna,
+                                        void *py_data,
+                                        bool *have_function)
 {
   const char *class_type = RNA_struct_identifier(srna);
   StructRNA *srna_base = RNA_struct_base(srna);
@@ -9921,8 +10259,7 @@ static int bpy_class_validate(PointerRNA *dummy_ptr, void *py_data, bool *have_f
 #if defined(__SANITIZE_ADDRESS__) && defined(_MSC_VER) && !defined(__clang__)
 __declspec(no_sanitize_address)
 #endif
-static int
-bpy_class_call(bContext *C, PointerRNA *ptr, FunctionRNA *func, ParameterList *parms)
+static int bpy_class_call(bContext *C, PointerRNA *ptr, FunctionRNA *func, ParameterList *parms)
 {
   PyObject *args;
   PyObject *ret = nullptr, *py_srna = nullptr, *py_class_instance = nullptr, *parmitem;

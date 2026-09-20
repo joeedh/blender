@@ -528,7 +528,9 @@ static PyObject *Vector_normalize(VectorObject *self)
 
   normalize_vn(self->vec, vec_num);
 
-  (void)BaseMath_WriteCallback(self);
+  if (BaseMath_WriteCallback(self) == -1) {
+    return nullptr;
+  }
   Py_RETURN_NONE;
 }
 PyDoc_STRVAR(
@@ -1615,7 +1617,9 @@ static PyObject *Vector_rotate(VectorObject *self, PyObject *value)
     mul_m3_v3(other_rmat, self->vec);
   }
 
-  (void)BaseMath_WriteCallback(self);
+  if (BaseMath_WriteCallback(self) == -1) {
+    return nullptr;
+  }
   Py_RETURN_NONE;
 }
 
@@ -1639,7 +1643,9 @@ static PyObject *Vector_negate(VectorObject *self)
 
   negate_vn(self->vec, self->vec_num);
 
-  (void)BaseMath_WriteCallback(self); /* already checked for error */
+  if (BaseMath_WriteCallback(self) == -1) {
+    return nullptr;
+  }
   Py_RETURN_NONE;
 }
 
@@ -2181,7 +2187,9 @@ static PyObject *Vector_iadd(PyObject *v1, PyObject *v2)
 
   add_vn_vn(vec1->vec, vec2->vec, vec1->vec_num);
 
-  (void)BaseMath_WriteCallback(vec1);
+  if (BaseMath_WriteCallback(vec1) == -1) {
+    return nullptr;
+  }
   Py_INCREF(v1);
   return v1;
 }
@@ -2256,7 +2264,9 @@ static PyObject *Vector_isub(PyObject *v1, PyObject *v2)
 
   sub_vn_vn(vec1->vec, vec2->vec, vec1->vec_num);
 
-  (void)BaseMath_WriteCallback(vec1);
+  if (BaseMath_WriteCallback(vec1) == -1) {
+    return nullptr;
+  }
   Py_INCREF(v1);
   return v1;
 }
@@ -2425,7 +2435,9 @@ static PyObject *Vector_imul(PyObject *v1, PyObject *v2)
     return nullptr;
   }
 
-  (void)BaseMath_WriteCallback(vec1);
+  if (BaseMath_WriteCallback(vec1) == -1) {
+    return nullptr;
+  }
   Py_INCREF(v1);
   return v1;
 }
@@ -2579,7 +2591,9 @@ static PyObject *Vector_idiv(PyObject *v1, PyObject *v2)
 
   mul_vn_fl(vec1->vec, vec1->vec_num, 1.0f / scalar);
 
-  (void)BaseMath_WriteCallback(vec1);
+  if (BaseMath_WriteCallback(vec1) == -1) {
+    return nullptr;
+  }
 
   Py_INCREF(v1);
   return v1;
@@ -2762,7 +2776,9 @@ static int Vector_length_set(VectorObject *self, PyObject *value)
 
   mul_vn_fl(self->vec, self->vec_num, 1.0 / dot);
 
-  (void)BaseMath_WriteCallback(self); /* checked already */
+  if (BaseMath_WriteCallback(self) == -1) {
+    return -1;
+  }
 
   return 0;
 }
