@@ -26,6 +26,7 @@
 #include "bpy_rna_context.hh"
 #include "bpy_rna_data.hh"
 #include "bpy_rna_id_collection.hh"
+#include "bpy_rna_idprops.hh"
 #include "bpy_rna_text.hh"
 #include "bpy_rna_types_capi.hh"
 #include "bpy_rna_ui.hh"
@@ -43,6 +44,9 @@ namespace blender {
 
 static PyMethodDef pyrna_id_methods_authoring[6] = {};
 static_assert(ARRAY_SIZE(pyrna_id_methods_authoring) == 6);
+
+static PyMethodDef pyrna_id_methods_atomic[3] = {};
+static_assert(ARRAY_SIZE(pyrna_id_methods_atomic) == 3);
 
 static PyMethodDef pyrna_blenddata_methods[] = {
     {nullptr, nullptr, 0, nullptr}, /* #BPY_rna_id_collection_user_map_method_def */
@@ -127,7 +131,13 @@ static PyGetSetDef pyrna_windowmanager_getset[] = {
 /** \name Window Type
  * \{ */
 
+static PyGetSetDef pyrna_event_getset[] = {
+    {nullptr, nullptr, nullptr, nullptr, nullptr}, /* #BPY_rna_event_time_getset_def */
+    {nullptr, nullptr, nullptr, nullptr, nullptr},
+};
+
 static PyMethodDef pyrna_window_methods[] = {
+    {nullptr, nullptr, 0, nullptr}, /* #BPY_rna_window_event_simulate_input_method_def */
     {nullptr, nullptr, 0, nullptr}, /* #BPY_rna_window_screenshot_method_def */
     {nullptr, nullptr, 0, nullptr},
 };
@@ -213,6 +223,11 @@ void BPY_rna_types_extend_capi(PyObject *bpy_types)
                   BPY_rna_authoring_curve_key_method_def);
   pyrna_struct_type_extend_capi(RNA_ID, pyrna_id_methods_authoring, nullptr);
 
+  ARRAY_SET_ITEMS(pyrna_id_methods_atomic,
+                  BPY_rna_id_properties_update_atomic_method_def,
+                  BPY_rna_system_property_scalar_method_def);
+  pyrna_struct_type_extend_capi(RNA_ID, pyrna_id_methods_atomic, nullptr);
+
   /* BlendData */
   ARRAY_SET_ITEMS(pyrna_blenddata_methods,
                   BPY_rna_id_collection_user_map_method_def,
@@ -261,8 +276,12 @@ void BPY_rna_types_extend_capi(PyObject *bpy_types)
       RNA_WindowManager, pyrna_windowmanager_methods, pyrna_windowmanager_getset);
 
   /* Window */
-  ARRAY_SET_ITEMS(pyrna_window_methods, BPY_rna_window_screenshot_method_def);
-  BLI_STATIC_ASSERT(ARRAY_SIZE(pyrna_window_methods) == 2, "Unexpected number of methods")
+  ARRAY_SET_ITEMS(pyrna_window_methods,
+                  BPY_rna_window_screenshot_method_def,
+                  BPY_rna_window_event_simulate_input_method_def);
+  BLI_STATIC_ASSERT(ARRAY_SIZE(pyrna_window_methods) == 3, "Unexpected number of methods")
+  ARRAY_SET_ITEMS(pyrna_event_getset, BPY_rna_event_time_getset_def);
+  pyrna_struct_type_extend_capi(RNA_Event, nullptr, pyrna_event_getset);
   pyrna_struct_type_extend_capi(RNA_Window, pyrna_window_methods, nullptr);
 
   /* Context */

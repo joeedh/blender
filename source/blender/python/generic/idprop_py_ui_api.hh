@@ -21,6 +21,9 @@ struct BPy_IDPropertyUIManager {
   IDProperty *property;
 };
 
+PyObject *BPy_IDPropertyUIData_update(IDProperty *property, PyObject *kwargs);
+PyObject *BPy_IDPropertyUIData_as_dict(IDProperty *property);
+
 void IDPropertyUIData_Init_Types();
 
 }  // namespace blender

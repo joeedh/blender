@@ -903,6 +903,7 @@ GHOST_TSuccess GHOST_WindowWin32::getPointerInfo(
     }
 
     outPointerInfo[i].pixelLocation = pointerApiInfo.ptPixelLocation;
+    outPointerInfo[i].tabletData = GHOST_TABLET_DATA_NONE;
     outPointerInfo[i].tabletData.Active = GHOST_kTabletModeStylus;
     outPointerInfo[i].tabletData.Pressure = 1.0f;
     outPointerInfo[i].tabletData.Xtilt = 0.0f;
@@ -910,6 +911,7 @@ GHOST_TSuccess GHOST_WindowWin32::getPointerInfo(
     outPointerInfo[i].time = system->performanceCounterToMillis(pointerApiInfo.PerformanceCount);
 
     if (pointerPenInfo[i].penMask & PEN_MASK_PRESSURE) {
+      outPointerInfo[i].tabletData.InputPresence |= GHOST_kTabletPressure;
       outPointerInfo[i].tabletData.Pressure = pointerPenInfo[i].pressure / 1024.0f;
     }
 
@@ -918,6 +920,7 @@ GHOST_TSuccess GHOST_WindowWin32::getPointerInfo(
     }
 
     if (pointerPenInfo[i].penMask & PEN_MASK_TILT_X) {
+      outPointerInfo[i].tabletData.InputPresence |= GHOST_kTabletTiltX;
       /* Input value is a range of -90 to +90, with a positive value
        * indicating a tilt to the right. Convert to what Blender
        * expects: -1.0f (left) to +1.0f (right). */
@@ -926,6 +929,7 @@ GHOST_TSuccess GHOST_WindowWin32::getPointerInfo(
     }
 
     if (pointerPenInfo[i].penMask & PEN_MASK_TILT_Y) {
+      outPointerInfo[i].tabletData.InputPresence |= GHOST_kTabletTiltY;
       /* Input value is a range of -90 to +90, with a positive value
        * indicating a tilt toward the user. Convert to what Blender
        * expects: -1.0f (away from user) to +1.0f (toward user). */

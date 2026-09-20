@@ -476,6 +476,8 @@ INFO_DOCS = (
      "Declaring, editing and caching scalar curves owned by data-blocks."),
     (Path("info_property_authoring.rst"),
      "Explicit grouped Brush and Scene authoring, rollback and undo."),
+    (Path("info_atomic_id_properties.rst"),
+     "Atomic scalar custom-property authoring and metadata updates."),
     (Path("info_api_reference.rst"),
      "Examples of how to use the API reference docs."),
     (Path("info_best_practice.rst"),

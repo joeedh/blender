@@ -160,18 +160,14 @@ GHOST_Wintab *GHOST_Wintab::loadWintab(HWND hwnd)
 
   /* __except and __finally cannot be used together, as such a second nested __try block is needed.
    */
-  __try
-  {
-    __try
-    {
+  __try {
+    __try {
       return GHOST_Wintab::loadWintabUnsafe(hwnd);
     }
-    __except (access_violation_exception_filter(GetExceptionCode(), GetExceptionInformation()))
-    {
+    __except (access_violation_exception_filter(GetExceptionCode(), GetExceptionInformation())) {
     }
   }
-  __finally
-  {
+  __finally {
     /* Restore our handler in case the Wintab driver replaced it. Huion's driver is known to do
      * this.
      */
@@ -356,6 +352,7 @@ void GHOST_Wintab::getInput(std::vector<GHOST_WintabInfoWin32> &outWintabInfo)
   for (int i = 0; i < numPackets; i++) {
     const PACKET pkt = pkts_[i];
     GHOST_WintabInfoWin32 out;
+    out.tabletData = GHOST_TABLET_DATA_NONE;
 
     /* % 3 for multiple devices ("DualTrack"). */
     switch (pkt.pkCursor % 3) {
@@ -375,10 +372,12 @@ void GHOST_Wintab::getInput(std::vector<GHOST_WintabInfoWin32> &outWintabInfo)
     out.y = pkt.pkY;
 
     if (max_pressure_ > 0) {
+      out.tabletData.InputPresence |= GHOST_kTabletPressure;
       out.tabletData.Pressure = float(pkt.pkNormalPressure) / float(max_pressure_);
     }
 
     if ((max_azimuth_ > 0) && (max_altitude_ > 0)) {
+      out.tabletData.InputPresence |= GHOST_kTabletTiltX | GHOST_kTabletTiltY;
       /* From the wintab spec:
        * orAzimuth: Specifies the clockwise rotation of the cursor about the z axis through a
        * full circular range.
