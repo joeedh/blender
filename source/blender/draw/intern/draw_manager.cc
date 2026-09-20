@@ -23,6 +23,7 @@
 #include "draw_context_private.hh"
 #include "draw_debug.hh"
 #include "draw_defines.hh"
+#include "draw_external.hh"
 #include "draw_manager.hh"
 #include "draw_pass.hh"
 #include "draw_shader.hh"
@@ -228,6 +229,24 @@ ResourceHandleRange Manager::unique_handle_for_sculpt(const ObjectRef &ref)
   const Bounds<float3> bounds = bke::pbvh::bounds_get(pbvh);
   const float3 center = math::midpoint(bounds.min, bounds.max);
   const float3 half_extent = bounds.max - center;
+  /* WORKAROUND: Instead of breaking const correctness everywhere, we only break it for this. */
+  const_cast<ObjectRef &>(ref).sculpt_handle_ = resource_handle(
+      ref, nullptr, &center, &half_extent);
+  return ref.sculpt_handle_;
+}
+
+ResourceHandleRange Manager::unique_handle_for_external(const ObjectRef &ref)
+{
+  if (ref.sculpt_handle_.is_valid()) {
+    return ref.sculpt_handle_;
+  }
+  const std::optional<Bounds<float3>> bounds = external_draw_bounds_get(ref.object);
+  if (!bounds) {
+    /* Nothing synced yet: evaluated-mesh bounds for the first frame. */
+    return unique_handle(ref);
+  }
+  const float3 center = math::midpoint(bounds->min, bounds->max);
+  const float3 half_extent = bounds->max - center;
   /* WORKAROUND: Instead of breaking const correctness everywhere, we only break it for this. */
   const_cast<ObjectRef &>(ref).sculpt_handle_ = resource_handle(
       ref, nullptr, &center, &half_extent);

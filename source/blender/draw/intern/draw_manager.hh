@@ -156,6 +156,15 @@ class Manager {
   ResourceHandleRange unique_handle_for_sculpt(const ObjectRef &ref);
 
   /**
+   * Like #unique_handle_for_sculpt, for objects drawn through an external draw
+   * provider: the handle's culling bounds come from the last synced union of
+   * provider node AABBs (#external_draw_bounds_get) — the displaced geometry —
+   * instead of the evaluated mesh's undisplaced cage bounds. Falls back to
+   * #unique_handle before the first sync.
+   */
+  ResourceHandleRange unique_handle_for_external(const ObjectRef &ref);
+
+  /**
    * Create a new resource handle for the given object.
    */
   ResourceHandleRange resource_handle(const ObjectRef &ref, float inflate_bounds = 0.0f);

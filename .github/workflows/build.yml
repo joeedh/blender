@@ -1,0 +1,254 @@
+# Manual, multi-platform build for this fork.
+#
+# Builds Blender (RelWithDebInfo) on Linux x64, macOS arm64 and Windows x64 to
+# verify the branch compiles everywhere AND to publish a portable install tree
+# per platform. Triggered by hand from the Actions tab. Each job uploads a
+# `blender-install-<os>` artifact (the `install` target's `bin/` tree) that the
+# addon repo's `tools/fetch-blender-dist.mjs` fetches (via `gh`) and bundles
+# with the SculptCore addon. On Linux/macOS that artifact is a single
+# uncompressed `blender-install.tar` (see the upload steps for why); on Windows
+# it is the bin/ tree itself.
+#
+# Precompiled libraries come from projects.blender.org (git-LFS submodules) and
+# are cached per platform, keyed on the pinned submodule commit, so a cache hit
+# skips the multi-GB download entirely.
+name: Build
+
+on:
+  workflow_dispatch:
+
+# A newer manual run supersedes an in-flight one on the same ref.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runs-on }}
+    # Full Blender builds are long; the lib download on a cold cache adds more.
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x64
+            runs-on: ubuntu-latest
+            lib_dir: lib/linux_x64
+          - name: macOS arm64
+            # macos-15 is Apple-silicon and ships Xcode 16 (Blender requires
+            # >= 16); macos-14 defaults to Xcode 15.
+            runs-on: macos-15
+            lib_dir: lib/macos_arm64
+          - name: Windows x64
+            runs-on: windows-latest
+            lib_dir: lib/windows_x64
+
+    defaults:
+      run:
+        # git-bash is present on all three runners; keep the steps uniform.
+        shell: bash
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Library submodules are fetched separately (and cached) below.
+          submodules: false
+          # Main-repo LFS files (startup.blend, fonts, ...) are pulled in the
+          # next step via Blender's projects.blender.org fallback, so that the
+          # pull is independent of the library cache below.
+          lfs: false
+
+      # startup.blend and other datafiles live in the main repo as Git-LFS
+      # objects; checkout leaves them as pointers. CMake (CMakeLists.txt:92)
+      # rejects the incomplete startup blend, so smudge the real files here.
+      # LFS objects are content-addressed, so projects.blender.org serves the
+      # fork's (unmodified) datafiles even if this GitHub mirror carries no LFS.
+      # This runs every time, independent of the library cache.
+      - name: Fetch main-repo Git LFS files
+        run: |
+          git lfs install --local
+          git remote add lfs-fallback https://projects.blender.org/blender/blender.git || true
+          git lfs pull lfs-fallback
+
+      # The Linux runner is tight on disk once libs + build tree land; reclaim
+      # space we don't use before anything large is written.
+      - name: Free disk space (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/.ghcup /opt/hostedtoolcache/CodeQL || true
+          df -h /
+
+      - name: Resolve library submodule commit
+        id: libcommit
+        run: echo "sha=$(git rev-parse "HEAD:${{ matrix.lib_dir }}")" >> "$GITHUB_OUTPUT"
+
+      - name: Cache precompiled libraries
+        id: libcache
+        uses: actions/cache@v4
+        with:
+          path: ${{ matrix.lib_dir }}
+          # Exact-match only: the pinned commit fully determines the contents,
+          # so a hit means we never touch projects.blender.org.
+          key: blender-libs-${{ matrix.lib_dir }}-${{ steps.libcommit.outputs.sha }}
+
+      - name: Fetch precompiled libraries
+        if: steps.libcache.outputs.cache-hit != 'true'
+        # --no-blender: leave the checked-out code alone, only enable + LFS-pull
+        # this platform's library submodule. Handles git-lfs install itself.
+        run: python3 build_files/utils/make_update.py --no-blender
+
+      - name: Install build dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          # Blender requires GCC >= 14; ubuntu-latest defaults to 13. Install
+          # gcc-14/g++-14 and select them for the shared configure step below.
+          sudo apt-get install -y --no-install-recommends \
+            build-essential gcc-14 g++-14 ninja-build cmake \
+            libx11-dev libxxf86vm-dev libxcursor-dev libxi-dev \
+            libxrandr-dev libxinerama-dev libxkbcommon-dev \
+            libegl-dev libglu1-mesa-dev \
+            libwayland-dev wayland-protocols libdbus-1-dev linux-libc-dev
+          echo "CC=gcc-14" >> "$GITHUB_ENV"
+          echo "CXX=g++-14" >> "$GITHUB_ENV"
+
+      - name: Install build dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install ninja
+          # Blender requires Xcode >= 16; select the newest 16.x on the runner.
+          sudo xcode-select -s "$(ls -d /Applications/Xcode_16*.app | sort -V | tail -1)"
+
+      # Put cl.exe + the MSVC INCLUDE/LIB environment on PATH. CMake's
+      # "Visual Studio" generator fails to locate VS on the runner image, so we
+      # build with Ninja + cl instead, matching the Linux/macOS path.
+      - name: Set up MSVC (Windows)
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Install build dependencies (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          choco install ninja -y --no-progress
+          echo "CC=cl" >> "$GITHUB_ENV"
+          echo "CXX=cl" >> "$GITHUB_ENV"
+
+      # One Ninja + single-config path for all three platforms. The compiler is
+      # selected per-OS via CC/CXX (gcc-14 on Linux, cl on Windows, AppleClang
+      # default on macOS). Build in-workspace (`build/`) so the portable install
+      # tree at `build/bin` is a clean upload path (no `..` outside the checkout).
+      #
+      # Optimization flags come from CMake's own RelWithDebInfo defaults, since
+      # Blender never sets a base itself — it only *appends* to
+      # `CMAKE_<LANG>_FLAGS_<CONFIG>` (`platform_win32.cmake:286`,
+      # `platform_unix.cmake:900`). gcc/AppleClang default to `-O2 -g -DNDEBUG`,
+      # which is what we want. MSVC defaults to `/Zi /O2 /Ob1 /DNDEBUG`, and
+      # `/Ob1` inlines only what is explicitly marked `inline` — a real cost in
+      # the templated sculpt/PBVH code, and a mismatch with the `-O2` full
+      # inlining the SculptCore engine DLL is built with, which would silently
+      # bias any native-vs-engine comparison made on a package. Ask for `-Ob2`
+      # and let Blender append its own `/MD /Zi`.
+      #
+      # Dash form, not slash form: these steps run under Git bash, whose MSYS
+      # runtime rewrites an argument that looks like a POSIX path, so a literal
+      # `/O2` reaches cmake as `C:/Program Files/Git/O2` and every compile then
+      # dies on `Cannot open source file: 'C:/Program'`. `cl` accepts `-` and
+      # `/` interchangeably and `-O2` is not path-like, so it survives untouched.
+      - name: Configure
+        run: |
+          args=(-DCMAKE_BUILD_TYPE=RelWithDebInfo -DWITH_BUILDINFO=OFF)
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            args+=(-DCMAKE_C_FLAGS_RELWITHDEBINFO="-O2 -Ob2 -DNDEBUG"
+                   -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O2 -Ob2 -DNDEBUG")
+          fi
+          cmake -S . -B build -G Ninja "${args[@]}"
+
+      # Fail loudly if the build is about to be unoptimized. An empty
+      # `CMAKE_<LANG>_FLAGS_<CONFIG>` cache entry produces a Blender that is
+      # 2-5x slower at sculpting with asserts live, and it reads as an engine
+      # performance regression rather than as a build mistake — which is exactly
+      # how it was diagnosed (slowly) on a local build dir. The cache entry is
+      # the thing to check: Blender's `string(APPEND ...)` sets a normal
+      # variable that shadows it, so the cache still shows the base CMake chose.
+      - name: Verify optimization flags
+        run: |
+          for lang in C CXX; do
+            line=$(grep "^CMAKE_${lang}_FLAGS_RELWITHDEBINFO:STRING=" build/CMakeCache.txt)
+            echo "$line"
+            flags=${line#*=}
+            # A drive-letter path in a compiler flag means MSYS mangled the
+            # argument (`/O2` -> `C:/Program Files/Git/O2`). Check this first:
+            # the mangled value still *contains* `/O2`, so the optimization test
+            # below passes on it and the build dies much later, in the compiler.
+            case "$flags" in
+              *:/*) echo "::error::${lang} RelWithDebInfo flags look MSYS-mangled: ${flags}"
+                    exit 1 ;;
+            esac
+            case " $flags " in
+              *" -O2 "*|*" /O2 "*) ;;
+              *) echo "::error::${lang} RelWithDebInfo flags carry no optimization: ${flags}"
+                 exit 1 ;;
+            esac
+            case " $flags " in
+              *" -DNDEBUG "*|*" /DNDEBUG "*) ;;
+              *) echo "::error::${lang} RelWithDebInfo flags carry no NDEBUG: ${flags}"
+                 exit 1 ;;
+            esac
+          done
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      # The `install` target populates `build/bin` with a portable Blender (the
+      # same tree tools/build-blender-dist.mjs stages from locally). On macOS
+      # this is `build/bin/Blender.app`. Strip on Linux/macOS: RelWithDebInfo
+      # embeds debug symbols in the binaries, ballooning the Linux artifact to
+      # multiple GB — `--strip` drops them from the installed executables. Windows
+      # keeps debug info in separate .pdb files, so there is nothing to strip.
+      - name: Install (portable tree)
+        run: |
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cmake --install build
+          else
+            cmake --install build --strip
+          fi
+
+      # actions/upload-artifact always re-zips its payload, and the zip GitHub
+      # writes carries neither Unix mode bits nor symlinks — so a raw build/bin
+      # upload arrives with the `blender` binary non-executable and the macOS
+      # .app framework symlinks flattened into file copies. Hand it a tar
+      # instead: modes and symlinks are entry metadata *inside* the archive, so
+      # they ride through the zip wrapper untouched. Left uncompressed on
+      # purpose — the artifact upload compresses it anyway, and an uncompressed
+      # tar can be appended to (`tar -rf`), which is how the addon repo's
+      # fetch tool injects the addon without unpacking the tree onto a
+      # filesystem that would lose the metadata all over again.
+      - name: Package install tree (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: tar -cf blender-install.tar -C build/bin .
+
+      - name: Upload Blender install (Linux/macOS)
+        if: runner.os != 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: blender-install-${{ runner.os }}
+          path: blender-install.tar
+          if-no-files-found: error
+
+      # Windows has no exec bits or symlinks to preserve, so it keeps the plain
+      # tree upload — a folder is friendlier to consume there anyway.
+      - name: Upload Blender install (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: blender-install-${{ runner.os }}
+          path: build/bin/**
+          if-no-files-found: error

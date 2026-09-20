@@ -46,6 +46,11 @@ const EnumPropertyItem rna_enum_context_mode_items[] = {
     {CTX_MODE_SCULPT_GREASE_PENCIL, "SCULPT_GREASE_PENCIL", 0, "Grease Pencil Sculpt", ""},
     {CTX_MODE_WEIGHT_GREASE_PENCIL, "WEIGHT_GREASE_PENCIL", 0, "Grease Pencil Weight Paint", ""},
     {CTX_MODE_VERTEX_GREASE_PENCIL, "VERTEX_GREASE_PENCIL", 0, "Grease Pencil Vertex Paint", ""},
+    {CTX_MODE_CUSTOM,
+     "CUSTOM",
+     0,
+     "Custom",
+     "Addon-registered mode (Object.custom_mode holds the idname)"},
     {0, nullptr, 0, nullptr, nullptr},
 };
 

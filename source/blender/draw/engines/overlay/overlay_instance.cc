@@ -7,6 +7,7 @@
  */
 
 #include "BKE_colorband.hh"
+#include "BKE_object_draw_provider.hh"
 #include "DEG_depsgraph_query.hh"
 
 #include "ED_view3d.hh"
@@ -1046,6 +1047,14 @@ bool Instance::object_is_sculpt_mode(const ObjectRef &ob_ref)
     const Object *active_object = state.object_active;
     const bool is_active_object = ob_ref.object == active_object;
     return is_active_object;
+  }
+
+  /* A custom sculpt mode drawing through the external provider gets the same
+   * sculpt overlays (mask/face sets); its batches carry the streams directly
+   * (see overlay_sculpt.hh / draw_external.cc). */
+  if (state.object_mode == OB_MODE_CUSTOM) {
+    return ob_ref.object == state.object_active &&
+           BKE_object_external_draw_provider_get(ob_ref.object) != nullptr;
   }
 
   return false;

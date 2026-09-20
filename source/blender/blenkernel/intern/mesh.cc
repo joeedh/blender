@@ -1143,6 +1143,151 @@ void BKE_mesh_clear_geometry(Mesh *mesh)
   mesh_clear_geometry(*mesh);
 }
 
+namespace bke {
+
+static void mesh_domain_resize(Mesh &mesh, const AttrDomain domain, CustomData &data, int &num, const int new_num)
+{
+  mesh.attribute_storage.wrap().resize(domain, new_num);
+  CustomData_realloc(&data, num, new_num, CD_SET_DEFAULT);
+  num = new_num;
+}
+
+bool mesh_set_topology(Mesh &mesh,
+                       const Span<float3> positions,
+                       const Span<int> corner_verts,
+                       const Span<int> face_offsets,
+                       const Span<int2> edges,
+                       std::string *r_error)
+{
+  const int verts_num = int(positions.size());
+  const int corners_num = int(corner_verts.size());
+  const int faces_num = std::max(int(face_offsets.size()) - 1, 0);
+
+  /* Cheap linear validation: a malformed topology here corrupts the mesh
+   * rather than erroring later, so refuse it up front. */
+  if (faces_num > 0) {
+    if (face_offsets.first() != 0 || face_offsets.last() != corners_num) {
+      if (r_error) {
+        *r_error = "face_offsets must start at 0 and end at the corner count";
+      }
+      return false;
+    }
+    for (const int i : IndexRange(faces_num)) {
+      if (face_offsets[i + 1] - face_offsets[i] < 3) {
+        if (r_error) {
+          *r_error = "every face needs at least 3 corners";
+        }
+        return false;
+      }
+    }
+  }
+  else if (corners_num != 0) {
+    if (r_error) {
+      *r_error = "corners given without faces";
+    }
+    return false;
+  }
+  for (const int vert : corner_verts) {
+    if (uint32_t(vert) >= uint32_t(verts_num)) {
+      if (r_error) {
+        *r_error = "corner_verts references a vertex out of range";
+      }
+      return false;
+    }
+  }
+  for (const int2 edge : edges) {
+    if (uint32_t(edge[0]) >= uint32_t(verts_num) || uint32_t(edge[1]) >= uint32_t(verts_num) ||
+        edge[0] == edge[1])
+    {
+      if (r_error) {
+        *r_error = "edges reference a vertex out of range (or are degenerate)";
+      }
+      return false;
+    }
+  }
+
+  BKE_mesh_runtime_clear_cache(&mesh);
+  BKE_mesh_tessface_clear(&mesh);
+
+  /* Resize every domain in place: unlike clear_geometry + add(), the layer
+   * *declarations* (names, types, active flags) and the Mesh-level metadata
+   * (vertex-group name table, color/UV designations, animation data) all
+   * survive. Old element values are meaningless under the new topology, so
+   * every layer resets to its type default before the caller writes real
+   * values back. */
+  mesh_domain_resize(mesh, AttrDomain::Point, mesh.vert_data, mesh.verts_num, verts_num);
+  mesh_domain_resize(mesh, AttrDomain::Edge, mesh.edge_data, mesh.edges_num, int(edges.size()));
+  mesh_domain_resize(mesh, AttrDomain::Corner, mesh.corner_data, mesh.corners_num, corners_num);
+  mesh_domain_resize(mesh, AttrDomain::Face, mesh.face_data, mesh.faces_num, faces_num);
+
+  const int old_offsets_num = mesh.face_offset_indices ? mesh.faces_num + 1 : 0;
+  implicit_sharing::resize_trivial_array(&mesh.face_offset_indices,
+                                         &mesh.runtime->face_offsets_sharing_info,
+                                         old_offsets_num,
+                                         faces_num == 0 ? 0 : faces_num + 1);
+
+  /* The selection history indexes the old elements. */
+  MEM_SAFE_DELETE(mesh.mselect);
+  mesh.totselect = 0;
+  mesh.act_face = -1;
+
+  MutableAttributeAccessor attributes = mesh.attributes_for_write();
+  for (const AttrDomain domain :
+       {AttrDomain::Point, AttrDomain::Edge, AttrDomain::Corner, AttrDomain::Face})
+  {
+    fill_attribute_range_default(
+        attributes, domain, {}, IndexRange(attributes.domain_size(domain)));
+  }
+
+  SpanAttributeWriter<float3> position_writer =
+      attributes.lookup_or_add_for_write_only_span<float3>("position", AttrDomain::Point);
+  position_writer.span.copy_from(positions);
+  position_writer.finish();
+  SpanAttributeWriter<int> corner_vert_writer =
+      attributes.lookup_or_add_for_write_only_span<int>(".corner_vert", AttrDomain::Corner);
+  corner_vert_writer.span.copy_from(corner_verts);
+  corner_vert_writer.finish();
+  attributes.add<int>(".corner_edge", AttrDomain::Corner, AttributeInitDefaultValue());
+  if (faces_num > 0) {
+    mesh.face_offsets_for_write().copy_from(face_offsets);
+  }
+  if (!edges.is_empty()) {
+    SpanAttributeWriter<int2> edge_writer =
+        attributes.lookup_or_add_for_write_only_span<int2>(".edge_verts", AttrDomain::Edge);
+    edge_writer.span.copy_from(edges);
+    edge_writer.finish();
+  }
+
+  /* Derive the remaining edges from the faces and fill `.corner_edge`;
+   * explicitly passed edges (e.g. loose/wire edges) are preserved. */
+  if (faces_num > 0 || !edges.is_empty()) {
+    mesh_calc_edges(mesh, !edges.is_empty(), false);
+  }
+
+  /* Shape-key blocks must stay sized to the vertex count or the next
+   * key/mesh exchange is a buffer overrun (BKE_keyblock_update_from_mesh
+   * memcpy's with only an assert guarding the sizes). Old block data indexes
+   * the old vertices, so every block resets to the new base shape — callers
+   * carrying real key data write it back afterwards. */
+  if (Key *key = mesh.key) {
+    for (KeyBlock &kb : key->block) {
+      if (kb.totelem != verts_num || kb.data == nullptr) {
+        MEM_SAFE_DELETE_VOID(kb.data);
+        kb.data = MEM_new_array_uninitialized(
+            size_t(std::max(verts_num, 1)), size_t(key->elemsize), __func__);
+        kb.totelem = verts_num;
+      }
+      if (key->elemsize == sizeof(float3)) {
+        memcpy(kb.data, positions.data(), sizeof(float3) * size_t(verts_num));
+      }
+    }
+  }
+
+  return true;
+}
+
+}  // namespace bke
+
 void BKE_mesh_clear_geometry_and_metadata(Mesh *mesh)
 {
   BKE_mesh_runtime_clear_cache(mesh);

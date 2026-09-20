@@ -25,6 +25,7 @@ struct PropertyRNA;
 struct Object;
 struct Scene;
 struct UndoStack;
+struct UndoType;
 struct ViewLayer;
 struct bContext;
 struct wmOperator;
@@ -153,6 +154,25 @@ void ED_undo_object_set_active_or_warn(const Main &bmain,
 
 void ED_undosys_type_init();
 void ED_undosys_type_free();
+
+/* `custom_mode_undo.cc` */
+
+namespace ed {
+
+/**
+ * Register the `CUSTOM_MODE` undo type: opt-in delta undo for addon-registered
+ * object modes (#OB_MODE_CUSTOM). See #BKE_UNDOSYS_TYPE_CUSTOM_MODE.
+ */
+void ED_custom_mode_undosys_type(UndoType *ut);
+
+/**
+ * Push a custom-mode undo step for the active object's mode. The heavy step
+ * data is owned by the addon; `state_id` is its opaque key and `size` the
+ * reported memory cost (for undo-stack accounting).
+ */
+void ED_custom_mode_undo_push(bContext *C, const char *name, int state_id, size_t size);
+
+}  // namespace ed
 
 /* `memfile_undo.cc` */
 

@@ -43,6 +43,7 @@
 #include "BKE_layer.hh"
 #include "BKE_lib_id.hh"
 #include "BKE_main.hh"
+#include "BKE_object_modes.hh"
 #include "BKE_paint.hh"
 #include "BKE_workspace.hh"
 
@@ -1163,7 +1164,18 @@ static bToolRef *toolsystem_reinit_ensure_toolref(bContext *C,
   bToolRef *tref;
   if (WM_toolsystem_ref_ensure(workspace, tkey, &tref)) {
     if (default_tool == nullptr) {
-      default_tool = toolsystem_default_tool(tkey);
+      /* Custom modes declare their own default tool (the generic default
+       * can't name an addon tool). */
+      if (tkey->mode == CTX_MODE_CUSTOM) {
+        const Scene *scene = CTX_data_scene(C);
+        ViewLayer *view_layer = CTX_data_view_layer(C);
+        BKE_view_layer_synced_ensure(*CTX_data_main(C), scene, view_layer);
+        const Object *ob = BKE_view_layer_active_object_get(view_layer);
+        default_tool = BKE_object_custom_mode_default_tool(ob);
+      }
+      if (default_tool == nullptr) {
+        default_tool = toolsystem_default_tool(tkey);
+      }
     }
     STRNCPY_UTF8(tref->idname, default_tool);
   }

@@ -900,6 +900,13 @@ static void object_blend_read_data(BlendDataReader *reader, ID *id)
      * TODO: Check if we should not disable more edit modes here? */
     ob->mode &= ~(OB_MODE_EDIT | OB_MODE_PARTICLE_EDIT);
   }
+  else {
+    /* Custom modes (#ObjectModeType) are session state: the addon's session
+     * cannot exist before its registration, so the mode is never active
+     * straight from a file. `custom_mode_id` is kept as the restore target
+     * (an addon may re-enter from a load-post handler). */
+    ob->mode &= ~OB_MODE_CUSTOM;
+  }
 
   BLO_read_struct(reader, bPose, &ob->pose);
   BKE_pose_blend_read_data(reader, &ob->id, ob->pose);

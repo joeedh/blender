@@ -54,9 +54,13 @@ static wmOperatorStatus multires_higher_levels_delete_exec(bContext *C, wmOperat
     return OPERATOR_CANCELLED;
   }
 
+  custom_mode_data_flush(ob);
+
   multiresModifier_del_levels(mmd, scene, ob, 1);
 
   iter_other(CTX_data_main(C), ob, true, multires_update_totlevels, &mmd->totlvl);
+
+  custom_mode_data_changed(C, ob);
 
   WM_event_add_notifier(C, NC_OBJECT | ND_MODIFIER, ob);
 
@@ -207,10 +211,14 @@ static wmOperatorStatus multires_reshape_exec(bContext *C, wmOperator *op)
     return OPERATOR_CANCELLED;
   }
 
+  custom_mode_data_flush(ob);
+
   if (!multiresModifier_reshapeFromObject(depsgraph, mmd, ob, secondob)) {
     BKE_report(op->reports, RPT_ERROR, "Objects do not have the same number of vertices");
     return OPERATOR_CANCELLED;
   }
+
+  custom_mode_data_changed(C, ob);
 
   DEG_id_tag_update(&ob->id, ID_RECALC_GEOMETRY);
   WM_event_add_notifier(C, NC_OBJECT | ND_MODIFIER, ob);
@@ -395,11 +403,15 @@ static wmOperatorStatus multires_base_apply_exec(bContext *C, wmOperator *op)
                                  ApplyBaseMode::ForSubdivision :
                                  ApplyBaseMode::Base;
 
+  custom_mode_data_flush(object);
+
   ed::sculpt_paint::undo::push_multires_mesh_begin(C, op->type->name);
 
   multiresModifier_base_apply(depsgraph, object, mmd, mode);
 
   ed::sculpt_paint::undo::push_multires_mesh_end(C, op->type->name);
+
+  custom_mode_data_changed(C, object);
 
   DEG_id_tag_update(&object->id, ID_RECALC_GEOMETRY);
   WM_event_add_notifier(C, NC_OBJECT | ND_MODIFIER, object);

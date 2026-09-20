@@ -84,6 +84,29 @@ void BKE_callback_exec_string(Main *bmain, const char *str, eCbEvent evt)
   BKE_callback_exec(bmain, pointers, ARRAY_SIZE(pointers), evt);
 }
 
+/* Set by #BKE_callback_veto while a vetoable event is running, read (and cleared) by
+ * #BKE_callback_exec_vetoable. Callbacks only ever run on the main thread. */
+static bool callback_veto = false;
+
+void BKE_callback_veto()
+{
+  callback_veto = true;
+}
+
+bool BKE_callback_exec_vetoable(Main *bmain,
+                                PointerRNA **pointers,
+                                const int pointers_num,
+                                eCbEvent evt)
+{
+  BLI_assert(BKE_callback_evt_is_vetoable(evt));
+
+  callback_veto = false;
+  BKE_callback_exec(bmain, pointers, pointers_num, evt);
+  const bool vetoed = callback_veto;
+  callback_veto = false;
+  return vetoed;
+}
+
 void BKE_callback_add(bCallbackFuncStore *funcstore, eCbEvent evt)
 {
   ASSERT_CALLBACKS_INITIALIZED();

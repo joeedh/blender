@@ -35,6 +35,7 @@
 #include "BKE_context.hh"
 #include "BKE_layer.hh"
 #include "BKE_main.hh"
+#include "BKE_object_modes.hh"
 #include "BKE_scene.hh"
 #include "BKE_screen.hh"
 #include "BKE_sound.hh"
@@ -1482,6 +1483,9 @@ enum eContextObjectMode CTX_data_mode_enum_ex(const Object *obedit,
       if (object_mode & OB_MODE_SCULPT_CURVES) {
         return CTX_MODE_SCULPT_CURVES;
       }
+      if (object_mode & OB_MODE_CUSTOM) {
+        return CTX_MODE_CUSTOM;
+      }
     }
   }
 
@@ -1528,13 +1532,24 @@ static const char *data_mode_strings[] = {
     "grease_pencil_sculpt",
     "grease_pencil_weight",
     "grease_pencil_vertex",
+    "custom",
     nullptr,
 };
 BLI_STATIC_ASSERT(ARRAY_SIZE(data_mode_strings) == CTX_MODE_NUM + 1,
                   "Must have a string for each context mode")
 const char *CTX_data_mode_string(const bContext *C)
 {
-  return data_mode_strings[CTX_data_mode_enum(C)];
+  const eContextObjectMode mode = CTX_data_mode_enum(C);
+  if (mode == CTX_MODE_CUSTOM) {
+    /* The registered idname keys panel `bl_context` and tool matching per
+     * custom mode; the generic "custom" slot string is the fallback for an
+     * unregistered idname (addon disabled). */
+    const Object *ob = CTX_data_active_object(C);
+    if (ob && ob->custom_mode_id[0] && BKE_object_mode_type_find(ob->custom_mode_id)) {
+      return ob->custom_mode_id;
+    }
+  }
+  return data_mode_strings[mode];
 }
 
 void CTX_data_scene_set(bContext *C, Scene *scene)

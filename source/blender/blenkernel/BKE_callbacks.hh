@@ -115,8 +115,19 @@ enum eCbEvent {
   BKE_CB_EVT_BLENDIMPORT_PRE,
   BKE_CB_EVT_BLENDIMPORT_POST,
   BKE_CB_EVT_EXIT_PRE,
+  BKE_CB_EVT_QUIT_PRE,
   BKE_CB_EVT_TOT,
 };
+
+/**
+ * Events whose handlers may abort the action they are called for, by returning a true value from
+ * Python (which calls #BKE_callback_veto). Only these events read the veto flag, so an unrelated
+ * handler returning something truthy cannot cancel anything.
+ */
+inline bool BKE_callback_evt_is_vetoable(const eCbEvent evt)
+{
+  return evt == BKE_CB_EVT_QUIT_PRE;
+}
 
 struct bCallbackFuncStore {
   bCallbackFuncStore *next, *prev;
@@ -131,6 +142,17 @@ void BKE_callback_exec_id(Main *bmain, ID *id, eCbEvent evt);
 void BKE_callback_exec_id_depsgraph(Main *bmain, ID *id, Depsgraph *depsgraph, eCbEvent evt);
 void BKE_callback_exec_boolean(Main *bmain, bool value, eCbEvent evt);
 void BKE_callback_exec_string(Main *bmain, const char *str, eCbEvent evt);
+/**
+ * Run the handlers of a vetoable event (see #BKE_callback_evt_is_vetoable) and report whether one
+ * of them asked for the pending action to be aborted. The caller owns what "aborted" means; for
+ * #BKE_CB_EVT_QUIT_PRE the handler takes over responsibility for quitting (or not).
+ */
+bool BKE_callback_exec_vetoable(Main *bmain, PointerRNA **pointers, int pointers_num, eCbEvent evt);
+/**
+ * Called from within a vetoable event's handler to abort the pending action.
+ * Ignored outside of #BKE_callback_exec_vetoable.
+ */
+void BKE_callback_veto();
 void BKE_callback_add(bCallbackFuncStore *funcstore, eCbEvent evt);
 void BKE_callback_remove(bCallbackFuncStore *funcstore, eCbEvent evt);
 

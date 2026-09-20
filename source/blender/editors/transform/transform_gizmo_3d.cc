@@ -560,6 +560,9 @@ static int gizmo_3d_foreach_selected(const bContext *C,
   ViewLayer *view_layer = CTX_data_view_layer(C);
   View3D *v3d = static_cast<View3D *>(area->spacedata.first);
   int a, totsel = 0;
+  /* Whether the coordinates handed to \a user_fn are in the active object's
+   * space (so \a r_mat describes them) or already in world space. */
+  bool coords_in_object_space = true;
 
   Object *ob = gizmo_3d_transform_space_object_get(*bmain, scene, view_layer);
 
@@ -935,6 +938,10 @@ static int gizmo_3d_foreach_selected(const bContext *C,
   else {
     const Main *bmain = CTX_data_main(C);
 
+    /* Object origins and bounds corners are transformed below, unlike every
+     * branch above, which reports coordinates in the active object's space. */
+    coords_in_object_space = false;
+
     /* We need the one selected object, if its not active. */
     BKE_view_layer_synced_ensure(*bmain, scene, view_layer);
     {
@@ -986,7 +993,7 @@ static int gizmo_3d_foreach_selected(const bContext *C,
     }
   }
 
-  if (r_mat && ob) {
+  if (r_mat && ob && coords_in_object_space) {
     *r_mat = ob->object_to_world().ptr();
   }
 

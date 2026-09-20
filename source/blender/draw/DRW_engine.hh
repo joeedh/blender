@@ -173,6 +173,13 @@ void DRW_xr_drawing_end();
 /** For garbage collection. */
 void DRW_cache_free_old_batches(Main *bmain);
 
+/**
+ * Free the external-draw GPU cache (VBOs/batches built from an external draw
+ * provider, see #BKE_object_draw_provider.hh) for `ob`. Call on custom-mode
+ * exit — nothing else frees it until GPU teardown. Safe when nothing is cached.
+ */
+void DRW_external_draw_cache_free(Object *ob);
+
 namespace draw {
 
 /** Free garbage collected subdivision data. */

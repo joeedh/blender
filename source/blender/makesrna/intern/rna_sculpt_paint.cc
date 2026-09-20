@@ -105,6 +105,8 @@ const EnumPropertyItem rna_enum_symmetrize_direction_items[] = {
 #ifdef RNA_RUNTIME
 #  include "MEM_guardedalloc.h"
 
+#  include "BLI_math_vector_c.hh"
+
 #  include "BKE_brush.hh"
 #  include "BKE_collection.hh"
 #  include "BKE_colortools.hh"
@@ -290,6 +292,29 @@ static bool rna_Paint_brush_poll(PointerRNA *ptr, PointerRNA value)
   const Brush *brush = static_cast<Brush *>(value.data);
 
   return (brush == nullptr) || (paint->runtime->ob_mode & brush->ob_mode) != 0;
+}
+
+static void rna_Paint_stroke_pivot_get(PointerRNA *ptr, float *values)
+{
+  const Paint *paint = static_cast<Paint *>(ptr->data);
+  const bke::PaintRuntime &paint_runtime = *paint->runtime;
+  if (paint_runtime.last_stroke_valid && paint_runtime.average_stroke_counter > 0) {
+    mul_v3_v3fl(values,
+                paint_runtime.average_stroke_accum,
+                1.0f / float(paint_runtime.average_stroke_counter));
+  }
+  else {
+    zero_v3(values);
+  }
+}
+
+static void rna_Paint_stroke_pivot_set(PointerRNA *ptr, const float *values)
+{
+  Paint *paint = static_cast<Paint *>(ptr->data);
+  bke::PaintRuntime &paint_runtime = *paint->runtime;
+  copy_v3_v3(paint_runtime.average_stroke_accum, values);
+  paint_runtime.average_stroke_counter = 1;
+  paint_runtime.last_stroke_valid = true;
 }
 
 static void rna_Sculpt_update(bContext *C, PointerRNA * /*ptr*/)
@@ -840,6 +865,15 @@ static void rna_def_paint(BlenderRNA *brna)
   RNA_def_property_flag(prop, PROP_NEVER_NULL);
   RNA_def_property_struct_type(prop, "MeshAutomaskingSettings");
   RNA_def_property_ui_text(prop, "Mesh Automasking Settings", nullptr);
+
+  prop = RNA_def_property(srna, "stroke_pivot", PROP_FLOAT, PROP_TRANSLATION);
+  RNA_def_property_array(prop, 3);
+  RNA_def_property_float_funcs(
+      prop, "rna_Paint_stroke_pivot_get", "rna_Paint_stroke_pivot_set", nullptr);
+  RNA_def_property_ui_text(prop,
+                           "Stroke Pivot",
+                           "World space center of the last stroke, used as the pivot when the "
+                           "view orbits around the selection. Zero before any stroke");
 }
 
 static void rna_def_unified_paint_settings(BlenderRNA *brna)

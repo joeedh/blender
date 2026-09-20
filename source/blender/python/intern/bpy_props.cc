@@ -725,6 +725,7 @@ static void bpy_prop_update_fn(bContext *C, PointerRNA *ptr, PropertyRNA *prop)
   BLI_assert(prop_store != nullptr);
 
   py_func = prop_store->py_data.update_fn;
+  Py_INCREF(py_func);
 
   {
     PyObject *args = PyTuple_New(2);
@@ -753,6 +754,7 @@ static void bpy_prop_update_fn(bContext *C, PointerRNA *ptr, PropertyRNA *prop)
     pyrna_write_set(false);
   }
 
+  Py_DECREF(py_func);
   bpy_context_clear(C, &gilstate);
 }
 

@@ -16,6 +16,7 @@
 #include "DNA_scene_types.h"
 
 #include "BLI_listbase.hh"
+#include "BLI_listbase_iterator.hh"
 #include "BLI_task_c.hh"
 #include "BLI_utildefines.hh"
 #include "BLI_vector.hh"
@@ -27,6 +28,7 @@
 #include "BKE_layer.hh"
 #include "BKE_main.hh"
 #include "BKE_object.hh"
+#include "BKE_object_modes.hh"
 #include "BKE_paint.hh"
 #include "BKE_report.hh"
 #include "BKE_scene.hh"
@@ -215,6 +217,23 @@ static void ed_undo_step_post(bContext *C,
     BKE_callback_exec_id(
         bmain, &scene->id, (undo_dir == STEP_UNDO) ? BKE_CB_EVT_UNDO_POST : BKE_CB_EVT_REDO_POST);
     wm->op_undo_depth--;
+  }
+
+  /* Custom-mode sessions re-sync against the (possibly replaced) data — a
+   * memfile decode swaps out the whole Main under Tier-1 undo. Modes that
+   * provide their own delta undo resync inside `undo_decode`; a full refresh
+   * (rebuild from the Mesh ID) would discard their in-engine history, so it is
+   * skipped for them (foreign-memfile resync is their own responsibility, per
+   * the undo-integration plan §4). */
+  for (Object &ob : bmain->objects) {
+    if ((ob.mode & OB_MODE_CUSTOM) && !BKE_object_custom_mode_uses_custom_undo(&ob)) {
+      ObjectModeType *mt = BKE_object_mode_type_find(ob.custom_mode_id);
+      if (mt && mt->refresh) {
+        wm->op_undo_depth++;
+        mt->refresh(mt, C, &ob);
+        wm->op_undo_depth--;
+      }
+    }
   }
 
   if (G.debug & G_DEBUG_IO) {

@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
 set(INC
+  ../../depsgraph
   ../include
   ../../makesrna
 
@@ -14,6 +15,8 @@ set(INC_SYS
 )
 
 set(SRC
+  authoring_undo.cc
+  custom_mode_undo.cc
   ed_undo.cc
   memfile_undo.cc
   undo_system_types.cc

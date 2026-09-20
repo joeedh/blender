@@ -30,6 +30,11 @@ enum eObjectMode : int {
   OB_MODE_WEIGHT_GREASE_PENCIL = 1 << 10,
   OB_MODE_VERTEX_GREASE_PENCIL = 1 << 11,
   OB_MODE_SCULPT_CURVES = 1 << 12,
+  /**
+   * An addon-registered mode (#ObjectModeType). All custom modes share this
+   * one bit; the active mode is identified by #Object.custom_mode_id.
+   */
+  OB_MODE_CUSTOM = 1 << 13,
 };
 ENUM_OPERATORS(eObjectMode)
 
@@ -64,6 +69,7 @@ enum eDrawType : char {
 #define OB_MODE_ALL_MODE_DATA \
   (OB_MODE_EDIT | OB_MODE_VERTEX_PAINT | OB_MODE_WEIGHT_PAINT | OB_MODE_SCULPT | OB_MODE_POSE | \
    OB_MODE_PAINT_GREASE_PENCIL | OB_MODE_EDIT_GPENCIL_LEGACY | OB_MODE_SCULPT_GREASE_PENCIL | \
-   OB_MODE_WEIGHT_GREASE_PENCIL | OB_MODE_VERTEX_GREASE_PENCIL | OB_MODE_SCULPT_CURVES)
+   OB_MODE_WEIGHT_GREASE_PENCIL | OB_MODE_VERTEX_GREASE_PENCIL | OB_MODE_SCULPT_CURVES | \
+   OB_MODE_CUSTOM)
 
 }  // namespace blender

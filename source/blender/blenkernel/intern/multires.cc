@@ -38,6 +38,7 @@
 #include "BKE_subdiv_ccg.hh"
 
 #include "BKE_object.hh"
+#include "BKE_object_modes.hh"
 
 #include "DEG_depsgraph_query.hh"
 
@@ -219,7 +220,12 @@ int multires_get_level(const Scene *scene,
     return (scene != nullptr) ? get_render_subsurf_level(&scene->r, mmd->renderlvl, true) :
                                 mmd->renderlvl;
   }
-  if (ob->mode == OB_MODE_SCULPT) {
+  /* Custom modes that sculpt (#OBJECT_MODE_TYPE_USE_SCULPT_PAINT) drive the
+   * same level the sculpt UI does, so "the level being worked on" is the
+   * sculpt level for them too — without this, #multiresModifier_del_levels and
+   * the reshape contexts fall through to the viewport level and act on a level
+   * the user is not looking at. */
+  if (ob->mode == OB_MODE_SCULPT || BKE_object_custom_mode_uses_sculpt_paint(ob)) {
     return mmd->sculptlvl;
   }
   if (ignore_simplify) {

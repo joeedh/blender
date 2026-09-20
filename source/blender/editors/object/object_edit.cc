@@ -59,6 +59,8 @@
 #include "BKE_modifier.hh"
 #include "BKE_node_runtime.hh"
 #include "BKE_object.hh"
+#include "BKE_object_draw_provider.hh"
+#include "BKE_object_modes.hh"
 #include "BKE_paint.hh"
 #include "BKE_particle.h"
 #include "BKE_pointcache.h"
@@ -70,6 +72,8 @@
 
 #include "DEG_depsgraph.hh"
 #include "DEG_depsgraph_build.hh"
+
+#include "DRW_engine.hh"
 
 #include "ED_anim_api.hh"
 #include "ED_armature.hh"
@@ -2021,10 +2025,30 @@ static const EnumPropertyItem *object_mode_set_itemf(bContext *C,
   const Object *ob = CTX_data_active_object(C);
   if (ob) {
     while (input->identifier) {
+      /* The generic 'CUSTOM' item passes when the object's previous custom
+       * mode is registered (re-enter affordance); the registered modes get
+       * their own items below. */
       if (mode_compat_test(ob, eObjectMode(input->value))) {
         RNA_enum_item_add(&item, &totitem, input);
       }
       input++;
+    }
+    /* Addon-registered modes: one item each; the 1-based registry index is
+     * encoded in the value's high bits (decoded in #object_mode_set_exec —
+     * every custom mode shares the single #OB_MODE_CUSTOM DNA bit). The
+     * identifier/name/icon reference the registry, which outlives the items. */
+    int index = 0;
+    for (ObjectModeType &mt : BKE_object_mode_types_get()) {
+      if (BKE_object_mode_type_poll_object(&mt, ob)) {
+        EnumPropertyItem mode_item = {};
+        mode_item.value = OB_MODE_CUSTOM | ((index + 1) << 16);
+        mode_item.identifier = mt.srna_idname;
+        mode_item.name = mt.label;
+        mode_item.description = "";
+        mode_item.icon = mt.icon;
+        RNA_enum_item_add(&item, &totitem, &mode_item);
+      }
+      index++;
     }
   }
   else {
@@ -2053,10 +2077,30 @@ static wmOperatorStatus object_mode_set_exec(bContext *C, wmOperator *op)
   eObjectMode mode = eObjectMode(RNA_enum_get(op->ptr, "mode"));
   const bool toggle = RNA_boolean_get(op->ptr, "toggle");
 
+  if (mode & OB_MODE_CUSTOM) {
+    /* Decode the per-registered-mode items from #object_mode_set_itemf: the
+     * 1-based registry index rides the high bits (0 = the plain 'CUSTOM'
+     * item, which re-enters the object's previous custom mode). Parked for
+     * #OBJECT_OT_custom_mode_toggle since the mode bits can't carry it. */
+    const int encoded_index = int(mode) >> 16;
+    if (encoded_index > 0) {
+      int index = 0;
+      for (ObjectModeType &mt : BKE_object_mode_types_get()) {
+        if (index++ == encoded_index - 1) {
+          custom_mode_pending_set(&mt);
+          break;
+        }
+      }
+    }
+    mode = OB_MODE_CUSTOM;
+  }
+
   if (!mode_compat_test(ob, mode)) {
+    custom_mode_pending_set(nullptr);
     return OPERATOR_PASS_THROUGH;
   }
   if (!object_mode_set_ok_or_report(op->reports)) {
+    custom_mode_pending_set(nullptr);
     return OPERATOR_CANCELLED;
   }
 
@@ -2134,6 +2178,8 @@ static wmOperatorStatus object_mode_set_exec(bContext *C, wmOperator *op)
     }
   }
 
+  custom_mode_pending_set(nullptr);
+
   wmWindowManager *wm = CTX_wm_manager(C);
   if (wm) {
     if (WM_autosave_is_scheduled(wm)) {
@@ -2188,6 +2234,153 @@ void OBJECT_OT_mode_set_with_submode(wmOperatorType *ot)
   prop = RNA_def_enum_flag(
       ot->srna, "mesh_select_mode", rna_enum_mesh_select_mode_items, 0, "Mesh Mode", "");
   RNA_def_property_flag(prop, PROP_HIDDEN | PROP_SKIP_SAVE);
+}
+
+/** \} */
+
+/* -------------------------------------------------------------------- */
+/** \name Toggle Custom Mode Operator
+ *
+ * The generic enter/exit dispatcher for addon-registered modes
+ * (#ObjectModeType) — the custom-mode analogue of the per-mode toggle
+ * operators that #object_mode_op_string maps the builtin modes to.
+ * \{ */
+
+static wmOperatorStatus object_custom_mode_toggle_exec(bContext *C, wmOperator *op)
+{
+  Object *ob = CTX_data_active_object(C);
+  wmMsgBus *mbus = CTX_wm_message_bus(C);
+  if (ob == nullptr) {
+    return OPERATOR_CANCELLED;
+  }
+
+  const bool is_mode_set = (ob->mode & OB_MODE_CUSTOM) != 0;
+
+  /* Exits any other active mode first (no-op when already in the target
+   * mode or in object mode). */
+  if (!mode_compat_set(C, ob, OB_MODE_CUSTOM, op->reports)) {
+    return OPERATOR_CANCELLED;
+  }
+
+  if (is_mode_set) {
+    ObjectModeType *mt = BKE_object_mode_type_find(ob->custom_mode_id);
+    if (mt && mt->exit) {
+      mt->exit(mt, C, ob);
+    }
+    DRW_external_draw_cache_free(ob);
+    /* `custom_mode_id` is kept as the restore target for re-entering. */
+    ob->mode &= ~OB_MODE_CUSTOM;
+  }
+  else {
+    /* The target mode: the operator's own property, the mode pending from
+     * #OBJECT_OT_mode_set, or the object's previous custom mode. */
+    char mode_id[sizeof(ob->custom_mode_id)];
+    RNA_string_get(op->ptr, "mode_id", mode_id);
+    ObjectModeType *mt = mode_id[0] ? BKE_object_mode_type_find(mode_id) : nullptr;
+    if (mt == nullptr) {
+      mt = custom_mode_pending_get();
+    }
+    if (mt == nullptr && ob->custom_mode_id[0]) {
+      mt = BKE_object_mode_type_find(ob->custom_mode_id);
+    }
+    if (mt == nullptr) {
+      BKE_report(op->reports, RPT_ERROR, "No registered custom mode to enter");
+      return OPERATOR_CANCELLED;
+    }
+    if (!BKE_object_mode_type_poll_object(mt, ob)) {
+      BKE_reportf(
+          op->reports, RPT_ERROR, "Mode '%s' does not support this object type", mt->idname);
+      return OPERATOR_CANCELLED;
+    }
+    STRNCPY(ob->custom_mode_id, mt->idname);
+    ob->mode = OB_MODE_CUSTOM;
+    if (mt->flag & OBJECT_MODE_TYPE_USE_SCULPT_PAINT) {
+      /* Same init as entering vanilla sculpt mode: ensures
+       * #ToolSettings.sculpt and activates the default brush asset when no
+       * brush is active yet. */
+      BKE_paint_init(CTX_data_main(C), CTX_data_scene(C), PaintMode::Sculpt);
+    }
+    if (mt->enter) {
+      mt->enter(mt, C, ob);
+    }
+  }
+
+  WM_toolsystem_update_from_context_view3d(C);
+
+  /* Necessary to change the object mode on the evaluated object. */
+  DEG_id_tag_update(&ob->id, ID_RECALC_SYNC_TO_EVAL);
+  WM_msg_publish_rna_prop(mbus, &ob->id, ob, Object, mode);
+  WM_event_add_notifier(C, NC_SCENE | ND_MODE, nullptr);
+  return OPERATOR_FINISHED;
+}
+
+void OBJECT_OT_custom_mode_toggle(wmOperatorType *ot)
+{
+  /* identifiers */
+  ot->name = "Toggle Custom Mode";
+  ot->idname = "OBJECT_OT_custom_mode_toggle";
+  ot->description = "Enter or exit an addon-registered object mode";
+
+  /* API callbacks. */
+  ot->exec = object_custom_mode_toggle_exec;
+  ot->poll = object_mode_set_poll;
+
+  /* flags */
+  ot->flag = OPTYPE_UNDO | OPTYPE_REGISTER;
+
+  PropertyRNA *prop = RNA_def_string(
+      ot->srna,
+      "mode_id",
+      nullptr,
+      sizeof(ObjectModeType::idname),
+      "Mode ID",
+      "Registered mode to enter (defaults to the pending or previous custom mode)");
+  RNA_def_property_flag(prop, PROP_SKIP_SAVE);
+}
+
+/** \} */
+
+/* -------------------------------------------------------------------- */
+/** \name Custom Mode Undo Push Operator
+ * \{ */
+
+static wmOperatorStatus object_custom_mode_undo_push_exec(bContext *C, wmOperator *op)
+{
+  Object *ob = CTX_data_active_object(C);
+  if (!BKE_object_custom_mode_uses_custom_undo(ob)) {
+    return OPERATOR_CANCELLED;
+  }
+  char message[256];
+  RNA_string_get(op->ptr, "message", message);
+  const int state_id = RNA_int_get(op->ptr, "state_id");
+  const int size = RNA_int_get(op->ptr, "size");
+  blender::ed::ED_custom_mode_undo_push(C, message[0] ? message : "Custom Mode", state_id, size);
+  return OPERATOR_FINISHED;
+}
+
+void OBJECT_OT_custom_mode_undo_push(wmOperatorType *ot)
+{
+  /* identifiers */
+  ot->name = "Custom Mode Undo Push";
+  ot->idname = "OBJECT_OT_custom_mode_undo_push";
+  ot->description = "Record an undo step handled by the active addon-registered mode";
+
+  /* API callbacks. */
+  ot->exec = object_custom_mode_undo_push_exec;
+  ot->poll = ED_operator_object_active;
+
+  /* No #OPTYPE_UNDO: this operator pushes its own custom undo step. */
+  ot->flag = OPTYPE_INTERNAL;
+
+  PropertyRNA *prop = RNA_def_string(
+      ot->srna, "message", nullptr, 256, "Message", "Name shown in the undo history");
+  RNA_def_property_flag(prop, PROP_SKIP_SAVE);
+  prop = RNA_def_int(
+      ot->srna, "state_id", 0, INT_MIN, INT_MAX, "State ID", "Addon step key", INT_MIN, INT_MAX);
+  RNA_def_property_flag(prop, PROP_SKIP_SAVE);
+  prop = RNA_def_int(
+      ot->srna, "size", 0, 0, INT_MAX, "Size", "Reported step size in bytes", 0, INT_MAX);
+  RNA_def_property_flag(prop, PROP_SKIP_SAVE);
 }
 
 /** \} */

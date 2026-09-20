@@ -301,6 +301,37 @@ void multires_reshape_ensure_grids(Mesh *mesh, int level);
 bool multires_reshape_assign_final_coords_from_vertcos(
     const MultiresReshapeContext *reshape_context, Span<float3> positions);
 
+/**
+ * Assign every grid paint-mask sample from per-subdivided-vertex values (one
+ * float per vertex of the reshape-level subdivision, boundary vertices
+ * scattered to every grid replica). Requires the context's mask layer;
+ * false when the vertex count does not match the reshape level.
+ */
+bool multires_reshape_assign_mask_from_vert_values(const MultiresReshapeContext *reshape_context,
+                                                   Span<float> values);
+
+/**
+ * Gather the grid paint mask into per-subdivided-vertex values (the read
+ * twin of the assign above; grids sampled at their own stored level). The
+ * returned array is MEM-allocated, `*r_values_num` long (zero where the
+ * context has no mask layer); null on walk failure. Caller frees.
+ */
+float *multires_reshape_read_mask_to_vert_values(const MultiresReshapeContext *reshape_context,
+                                                 int *r_values_num);
+
+/**
+ * The grid<->vertex correspondence itself: for every top-level grid sample, in
+ * MDisps order (`grid * grid_size^2 + y * grid_size + x`, grids in loop order),
+ * the index of the subdivided-mesh vertex that sample coincides with. Boundary
+ * samples of adjacent grids therefore repeat a vertex index. `-1` marks a
+ * sample the subdivision walk never visited.
+ *
+ * The returned array is MEM-allocated and `*r_indices_num` long; null on walk
+ * failure. Caller frees.
+ */
+int *multires_reshape_read_grid_vert_indices(const MultiresReshapeContext *reshape_context,
+                                             int *r_indices_num);
+
 /** \} */
 
 /* -------------------------------------------------------------------- */

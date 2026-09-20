@@ -41,6 +41,7 @@
 #include "BKE_library.hh"
 #include "BKE_main.hh"
 #include "BKE_object.hh"
+#include "BKE_object_modes.hh"
 #include "BKE_scene.hh"
 #include "BKE_screen.hh"
 #include "BKE_vfont.hh"
@@ -329,6 +330,42 @@ static SpaceLink *view3d_duplicate(SpaceLink *sl)
   return reinterpret_cast<SpaceLink *>(v3dn);
 }
 
+/**
+ * Resolve the active custom mode's keymap (#ObjectModeType.keymap) — the
+ * tool-keymap dynamic-handler pattern: activation is per-event, so one
+ * handler serves every registered mode. Empty result when the active object
+ * is not in a custom mode (or the mode declares no keymap).
+ */
+static void view3d_custom_mode_keymap_fn(wmWindowManager *wm,
+                                         wmWindow *win,
+                                         wmEventHandler_Keymap * /*handler*/,
+                                         wmEventHandler_KeymapResult *km_result)
+{
+  memset(km_result, 0x0, sizeof(*km_result));
+  if (win == nullptr) {
+    return;
+  }
+  const Scene *scene = WM_window_get_active_scene(win);
+  ViewLayer *view_layer = WM_window_get_active_view_layer(win);
+  BKE_view_layer_synced_ensure(*G_MAIN, scene, view_layer);
+  const Object *ob = BKE_view_layer_active_object_get(view_layer);
+  if (ob == nullptr || (ob->mode & OB_MODE_CUSTOM) == 0) {
+    return;
+  }
+  const ObjectModeType *mt = BKE_object_mode_type_find(ob->custom_mode_id);
+  if (mt == nullptr || mt->keymap[0] == '\0') {
+    return;
+  }
+  /* Ensured lazily in the default config (idempotent; the addon populates
+   * items from Python), resolved through the user config like tool keymaps. */
+  WM_keymap_ensure(wm->runtime->defaultconf, mt->keymap, SPACE_EMPTY, RGN_TYPE_WINDOW);
+  wmKeyMap *km = WM_keymap_list_find_spaceid_or_empty(
+      &wm->runtime->userconf->keymaps, mt->keymap, SPACE_VIEW3D, RGN_TYPE_WINDOW);
+  if (km != nullptr) {
+    km_result->keymaps[km_result->keymaps_len++] = km;
+  }
+}
+
 /* add handlers, stuff you only do once or on area/region changes */
 static void view3d_main_region_init(wmWindowManager *wm, ARegion *region)
 {
@@ -385,6 +422,10 @@ static void view3d_main_region_init(wmWindowManager *wm, ARegion *region)
 
   keymap = WM_keymap_ensure(wm->runtime->defaultconf, "Sculpt", SPACE_EMPTY, RGN_TYPE_WINDOW);
   WM_event_add_keymap_handler(&region->runtime->handlers, keymap);
+
+  /* Addon-registered mode keymap, resolved per active object. */
+  WM_event_add_keymap_handler_dynamic(
+      &region->runtime->handlers, view3d_custom_mode_keymap_fn, nullptr);
 
   keymap = WM_keymap_ensure(wm->runtime->defaultconf, "Mesh", SPACE_EMPTY, RGN_TYPE_WINDOW);
   WM_event_add_keymap_handler(&region->runtime->handlers, keymap);
