@@ -24,6 +24,7 @@
 #include "BLI_string_utf8.hh"
 #include "BLI_utildefines.hh"
 
+#include "BKE_curvemapping_owned.hh"
 #include "BKE_idprop.hh"
 #include "BKE_idprop_hash.hh"
 #include "BKE_lib_id.hh"
@@ -153,6 +154,8 @@ void IDP_SetIndexArray(IDProperty *prop, int index, IDProperty *item)
 
   IDProperty *old = GETPROP(prop, index);
   if (item != old) {
+    /* Only this slot is replaced; its free hook invalidates its old subtree. */
+    bke::owned_curve_membership_changed(prop);
     idp_free_property_content_recurse(old, true, 0);
 
     memcpy(old, item, sizeof(IDProperty));
@@ -200,6 +203,9 @@ static int idp_resize_grow_size_calc(const int newsize)
 void IDP_ResizeIDPArray(IDProperty *prop, int newlen)
 {
   BLI_assert(prop->type == IDP_IDPARRAY);
+  if (newlen != prop->len) {
+    bke::owned_curve_membership_changed(prop);
+  }
 
   /* first check if the array buffer size has room */
   if (newlen <= prop->totallen) {
@@ -216,6 +222,9 @@ void IDP_ResizeIDPArray(IDProperty *prop, int newlen)
       return;
     }
   }
+
+  /* Reallocation can move every inline item, including during large shrinks. */
+  bke::owned_curve_structure_changed(prop);
 
   /* free trailing items */
   if (newlen < prop->len) {
@@ -719,6 +728,7 @@ void IDP_ReplaceInGroup_ex(IDProperty *group,
   BLI_assert(prop_exist == IDP_GetPropertyFromGroup(group, prop->name));
 
   if (prop_exist != nullptr) {
+    bke::owned_curve_structure_changed(group);
     /* Insert the new property at the same position as the old one in the linked list. */
     BLI_insertlinkreplace(&group->data.group, prop_exist, prop);
     BLI_assert(group->data.children_map);
@@ -788,6 +798,7 @@ bool IDP_AddToGroup(IDProperty *group, IDProperty *prop)
 
   idp_group_children_map_ensure(*group);
   if (group->data.children_map->children.add(prop)) {
+    bke::owned_curve_structure_changed(group);
     group->len++;
     BLI_addtail(&group->data.group, prop);
     return true;
@@ -797,6 +808,8 @@ bool IDP_AddToGroup(IDProperty *group, IDProperty *prop)
 
 void IDP_RemoveFromGroup(IDProperty *group, IDProperty *prop)
 {
+  bke::owned_curve_structure_changed(group);
+  bke::owned_curve_invalidate_tree(prop);
   BLI_assert(group->type == IDP_GROUP);
   BLI_assert(BLI_findindex(&group->data.group, prop) != -1);
 
@@ -987,6 +1000,7 @@ IDProperty *IDP_CopyProperty(const IDProperty *prop)
 
 void IDP_CopyPropertyContent(IDProperty *dst, const IDProperty *src)
 {
+  bke::owned_curve_invalidate_tree(dst);
   IDProperty *idprop_tmp = IDP_CopyProperty(src);
   idprop_tmp->prev = dst->prev;
   idprop_tmp->next = dst->next;
@@ -1344,6 +1358,7 @@ static void idp_free_property_content_recurse(IDProperty *prop,
                                               const bool do_id_user,
                                               const int recursion_depth)
 {
+  bke::owned_curve_invalidate_property(prop);
   if (recursion_depth > MAX_IDPROP_DEPTH_LEVEL) {
     CLOG_ERROR(&LOG,
                "Too deep level of IDProperties embedding detected (over %d levels), this is "

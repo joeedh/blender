@@ -49,6 +49,7 @@
 #include "BKE_bpath.hh"
 #include "BKE_context.hh"
 #include "BKE_global.hh"
+#include "BKE_curvemapping_owned.hh"
 #include "BKE_idprop.hh"
 #include "BKE_idtype.hh"
 #include "BKE_key.hh"
@@ -991,6 +992,8 @@ static void id_swap(Main *bmain,
                     const int self_remap_flags)
 {
   BLI_assert(GS(id_a->name) == GS(id_b->name));
+  bke::owned_curve_invalidate_owner(id_a);
+  bke::owned_curve_invalidate_owner(id_b);
 
   IDRemapper *remapper_id_a = input_remapper_id_a;
   IDRemapper *remapper_id_b = input_remapper_id_b;

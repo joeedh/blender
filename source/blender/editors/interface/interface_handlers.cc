@@ -2797,6 +2797,13 @@ static void but_copy_curvemapping(Button *but)
 static void but_paste_curvemapping(bContext *C, Button *but)
 {
   if (but_copypaste_curve_alive && but->poin != nullptr) {
+    auto *curve_but = static_cast<ButtonCurveMapping *>(but);
+    if (curve_but->owned_curve_paste_validate &&
+        !curve_but->owned_curve_paste_validate(but_copypaste_curve))
+    {
+      ED_region_tag_redraw(CTX_wm_region(C));
+      return;
+    }
     button_activate_state(C, but, BUTTON_STATE_NUM_EDITING);
 
     CurveMapping *dest = reinterpret_cast<CurveMapping *>(but->poin);
@@ -8251,6 +8258,7 @@ static bool numedit_but_CURVE(Block *block,
 static int do_but_CURVE(
     bContext *C, Block *block, Button *but, HandleButtonData *data, const wmEvent *event)
 {
+  auto *curve_but = static_cast<ButtonCurveMapping *>(but);
   bool changed = false;
   const Main *bmain = CTX_data_main(C);
   Scene *scene = CTX_data_scene(C);
@@ -8268,7 +8276,9 @@ static int do_but_CURVE(
       float dist_min_sq = square_f(UI_SCALE_FAC * 14.0f); /* 14 pixels radius */
       int sel = -1;
 
-      if (event->modifier & KM_CTRL) {
+      if ((event->modifier & KM_CTRL) &&
+          (!curve_but->owned_curve_cancel || cuma->totpoint < 32767))
+      {
         float f_xy[2];
         BLI_rctf_transform_pt_v(&cumap->curr, &but->rect, f_xy, m_xy);
 
@@ -8289,7 +8299,7 @@ static int do_but_CURVE(
         }
       }
 
-      if (sel == -1) {
+      if (sel == -1 && (!curve_but->owned_curve_cancel || cuma->totpoint < 32767)) {
         float f_xy[2], f_xy_prev[2];
 
         /* if the click didn't select anything, check if it's clicked on the
@@ -8372,6 +8382,17 @@ static int do_but_CURVE(
     }
   }
   else if (data->state == BUTTON_STATE_NUM_EDITING) {
+    if (curve_but->owned_curve_cancel && ELEM(event->type, EVT_ESCKEY, RIGHTMOUSE) &&
+        event->val == KM_PRESS)
+    {
+      curve_but->owned_curve_cancel();
+      data->cancel = true;
+      if (block->handle) {
+        block->handle->menuretval = RETURN_CANCEL;
+      }
+      button_activate_state(C, but, BUTTON_STATE_EXIT);
+      return WM_UI_HANDLER_BREAK;
+    }
     if (event->type == MOUSEMOVE) {
       if (event->xy[0] != data->draglastx || event->xy[1] != data->draglasty) {
 

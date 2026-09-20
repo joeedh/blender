@@ -22,6 +22,7 @@
 
 #include "BKE_anim_data.hh"
 #include "BKE_asset.hh"
+#include "BKE_curvemapping_owned.hh"
 #include "BKE_idprop.hh"
 #include "BKE_idtype.hh"
 #include "BKE_key.hh"
@@ -50,6 +51,7 @@ using namespace bke::id;
 
 void BKE_libblock_free_data(ID *id, const bool do_id_user)
 {
+  bke::owned_curve_invalidate_owner(id);
   if (id->properties) {
     IDP_FreeProperty_ex(id->properties, do_id_user);
     id->properties = nullptr;

@@ -2177,6 +2177,15 @@ void RNA_api_ui_layout(StructRNA *srna)
       "Identifier of this preview widget, if not set the ID type will be used "
       "(i.e. all previews of materials without explicit ID will have the same size...).");
 
+  func = RNA_def_function(srna, "template_owned_curve_mapping", "template_owned_curve_mapping");
+  RNA_def_function_ui_description(
+      func, "Draw an owned scalar curve without creating missing property groups");
+  parm = RNA_def_pointer(func, "data", "AnyType", "", "ID or declared PropertyGroup owner");
+  RNA_def_parameter_flags(parm, PROP_NEVER_NULL, PARM_REQUIRED | PARM_RNAPTR);
+  parm = RNA_def_string(
+      func, "path", nullptr, 0, "", "Declared property path with numeric collection indices");
+  RNA_def_parameter_flags(parm, PropertyFlag(0), PARM_REQUIRED);
+
   func = RNA_def_function(srna, "template_curve_mapping", "template_curve_mapping");
   RNA_def_function_ui_description(
       func, "Item. A curve mapping widget used for e.g falloff curves for lights.");

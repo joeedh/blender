@@ -3263,6 +3263,7 @@ static void UI_OT_drop_material(wmOperatorType *ot)
 
 void operatortypes_ui()
 {
+  WM_operatortype_append(UI_OT_owned_curve_edit);
   WM_operatortype_append(UI_OT_copy_data_path_button);
   WM_operatortype_append(UI_OT_copy_as_driver_button);
   WM_operatortype_append(UI_OT_copy_python_command_button);

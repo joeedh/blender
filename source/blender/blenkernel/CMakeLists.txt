@@ -98,6 +98,8 @@ set(SRC
   intern/curve_nurbs.cc
   intern/curve_poly.cc
   intern/curve_to_mesh_convert.cc
+  intern/curvemapping_idprop.cc
+  intern/curvemapping_owned.cc
   intern/curveprofile.cc
   intern/curves.cc
   intern/curves_attributes.cc
@@ -385,6 +387,8 @@ set(SRC
   BKE_curve.hh
   BKE_curve_legacy_convert.hh
   BKE_curve_to_mesh.hh
+  BKE_curvemapping_idprop.hh
+  BKE_curvemapping_owned.hh
   BKE_curveprofile.h
   BKE_curves.h
   BKE_curves.hh
@@ -782,6 +786,8 @@ if(WITH_GTESTS)
     intern/bpath_test.cc
     intern/brush_test.cc
     intern/cryptomatte_test.cc
+    intern/curvemapping_idprop_test.cc
+    intern/curvemapping_owned_test.cc
     intern/curves_geometry_test.cc
     intern/deform_test.cc
     intern/fcurve_test.cc

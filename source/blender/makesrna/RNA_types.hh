@@ -10,6 +10,7 @@
 #ifndef __RNA_TYPES_H__
 #define __RNA_TYPES_H__
 
+#include <memory>
 #include <optional>
 #include <string>
 
@@ -19,6 +20,10 @@
 #include "../blenlib/BLI_vector.hh"
 
 namespace blender {
+
+namespace rna {
+class OwnedCurveHandle;
+}
 
 struct BlenderRNA;
 struct FunctionRNA;
@@ -65,6 +70,9 @@ struct PointerRNA {
    * Actual referenced data of the given #type. If set, the #type must also be set.
    */
   void *data = nullptr;
+
+  /** Retains owned-curve views independently of saved IDProperty storage. */
+  std::shared_ptr<rna::OwnedCurveHandle> owned_curve;
 
   /**
    * A chain of ancestors of this PointerRNA, if known. The last item is the closest ancestor.

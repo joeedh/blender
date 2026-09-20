@@ -23,6 +23,8 @@
 #include "ED_text.hh"
 #include "ED_undo.hh"
 
+#include "BKE_curvemapping_owned.hh"
+
 #include "undo_intern.hh"
 
 /* Keep last */
@@ -60,6 +62,7 @@ void ED_undosys_type_init()
   BKE_UNDOSYS_TYPE_CUSTOM_MODE = BKE_undosys_type_append(ed::ED_custom_mode_undosys_type);
 
   BKE_undosys_type_append(ed::authoring_undosys_type);
+  ed::authoring_register_owner_invalidate_hook(bke::owned_curve_invalidate_owner);
 
   /* Keep global undo last (as a fallback). */
   BKE_UNDOSYS_TYPE_MEMFILE = BKE_undosys_type_append(ED_memfile_undosys_type);

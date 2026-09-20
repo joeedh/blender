@@ -1156,13 +1156,14 @@ float BKE_curvemap_evaluateF(const CurveMapping *cumap, const CurveMap *cuma, fl
 
   /* index in table */
   float fi = (value - cuma->mintable) * cuma->range;
-  int i = int(fi);
 
   /* fi is table float index and should check against table range i.e. [0.0 CM_TABLE] */
   if (fi < 0.0f || fi > CM_TABLE) {
     return curvemap_calc_extend(cumap, cuma, value, &cuma->table[0].x, &cuma->table[CM_TABLE].x);
   }
 
+  /* Convert only after the range check; extrapolation can overflow the float index. */
+  const int i = int(fi);
   if (i < 0) {
     return cuma->table[0].y;
   }

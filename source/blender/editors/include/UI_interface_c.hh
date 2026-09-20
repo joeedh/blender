@@ -2574,6 +2574,7 @@ void template_icon_view(Layout *layout,
 void template_histogram(Layout *layout, PointerRNA *ptr, StringRefNull propname);
 void template_waveform(Layout *layout, PointerRNA *ptr, StringRefNull propname);
 void template_vectorscope(Layout *layout, PointerRNA *ptr, StringRefNull propname);
+void template_owned_curve_mapping(Layout *layout, PointerRNA *ptr, StringRefNull path);
 void template_curve_mapping(Layout *layout,
                             PointerRNA *ptr,
                             StringRefNull propname,

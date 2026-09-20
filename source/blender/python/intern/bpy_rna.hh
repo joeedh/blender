@@ -110,8 +110,10 @@ extern PyTypeObject pyrna_func_Type;
   } \
   (void)0
 
-#define PYRNA_STRUCT_IS_VALID(pysrna) (LIKELY(((BPy_StructRNA *)(pysrna))->ptr->has_type()))
-#define PYRNA_PROP_IS_VALID(pysrna) (LIKELY(((BPy_PropertyRNA *)(pysrna))->ptr->has_type()))
+#define PYRNA_STRUCT_IS_VALID(pysrna) \
+  (pyrna_pointer_validity_check_only(&((BPy_StructRNA *)(pysrna))->ptr.value()) == 0)
+#define PYRNA_PROP_IS_VALID(pysrna) \
+  (pyrna_pointer_validity_check_only(&((BPy_PropertyRNA *)(pysrna))->ptr.value()) == 0)
 
 /* 'in_weakreflist' MUST be aligned */
 
@@ -295,6 +297,7 @@ void pyrna_context_clear(bContext *C);
 void pyrna_invalidate(BPy_DummyPointerRNA *self);
 
 [[nodiscard]] int pyrna_struct_validity_check_only(const BPy_StructRNA *pysrna);
+[[nodiscard]] int pyrna_pointer_validity_check_only(const PointerRNA *ptr);
 void pyrna_struct_validity_exception_only(const BPy_StructRNA *pysrna);
 [[nodiscard]] int pyrna_struct_validity_check(const BPy_StructRNA *pysrna);
 

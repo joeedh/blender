@@ -64,6 +64,7 @@ enum PropertyFlagIntern : int16_t {
    * See also #StructFlag::STRUCT_RNA_DEFINITION for details.
    */
   PROP_INTERN_RNA_DEFINITION = (1 << 7),
+  PROP_INTERN_OWNED_CURVE = (1 << 8),
 };
 ENUM_OPERATORS(PropertyFlagIntern)
 

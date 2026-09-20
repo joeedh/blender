@@ -472,6 +472,8 @@ INFO_DOCS = (
      "New to Blender or scripting and want to get your feet wet?"),
     (Path("info_overview.rst"),
      "A more complete explanation of Python integration."),
+    (Path("info_owned_curve_mapping.rst"),
+     "Declaring, editing and caching scalar curves owned by data-blocks."),
     (Path("info_property_authoring.rst"),
      "Explicit grouped Brush and Scene authoring, rollback and undo."),
     (Path("info_api_reference.rst"),

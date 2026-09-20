@@ -214,6 +214,7 @@ unset(CMAKE_CXX_CLANG_TIDY)
 
 set(SRC_RNA_INC
   ../RNA_access.hh
+  ../RNA_owned_curve.hh
   ../RNA_define.hh
   ../RNA_documentation.hh
   ../RNA_enum_items.hh
@@ -437,6 +438,7 @@ add_custom_command(
 # Build bf_rna
 set(SRC
   rna_access.cc
+  rna_owned_curve.cc
   rna_access_compare_override.cc
   rna_define.cc
   rna_path.cc
