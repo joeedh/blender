@@ -472,6 +472,8 @@ INFO_DOCS = (
      "New to Blender or scripting and want to get your feet wet?"),
     (Path("info_overview.rst"),
      "A more complete explanation of Python integration."),
+    (Path("info_property_authoring.rst"),
+     "Explicit grouped Brush and Scene authoring, rollback and undo."),
     (Path("info_api_reference.rst"),
      "Examples of how to use the API reference docs."),
     (Path("info_best_practice.rst"),

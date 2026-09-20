@@ -22,6 +22,7 @@
 #include "bpy_library.hh"
 #include "bpy_rna.hh"
 #include "bpy_rna_callback.hh"
+#include "bpy_rna_authoring.hh"
 #include "bpy_rna_context.hh"
 #include "bpy_rna_data.hh"
 #include "bpy_rna_id_collection.hh"
@@ -39,6 +40,9 @@ namespace blender {
 /* -------------------------------------------------------------------- */
 /** \name Blend Data
  * \{ */
+
+static PyMethodDef pyrna_id_methods_authoring[6] = {};
+static_assert(ARRAY_SIZE(pyrna_id_methods_authoring) == 6);
 
 static PyMethodDef pyrna_blenddata_methods[] = {
     {nullptr, nullptr, 0, nullptr}, /* #BPY_rna_id_collection_user_map_method_def */
@@ -201,6 +205,14 @@ static PyMethodDef pyrna_space_methods[] = {
 
 void BPY_rna_types_extend_capi(PyObject *bpy_types)
 {
+  ARRAY_SET_ITEMS(pyrna_id_methods_authoring,
+                  BPY_rna_authoring_begin_method_def,
+                  BPY_rna_authoring_commit_method_def,
+                  BPY_rna_authoring_cancel_method_def,
+                  BPY_rna_authoring_revision_method_def,
+                  BPY_rna_authoring_curve_key_method_def);
+  pyrna_struct_type_extend_capi(RNA_ID, pyrna_id_methods_authoring, nullptr);
+
   /* BlendData */
   ARRAY_SET_ITEMS(pyrna_blenddata_methods,
                   BPY_rna_id_collection_user_map_method_def,

@@ -9,6 +9,7 @@
 #include <cstring>
 
 #include "ED_armature.hh"
+#include "ED_authoring_undo.hh"
 #include "ED_curve.hh"
 #include "ED_curves.hh"
 #include "ED_grease_pencil.hh"
@@ -57,6 +58,8 @@ void ED_undosys_type_init()
 
   /* Addon-registered custom object modes (opt-in delta undo). */
   BKE_UNDOSYS_TYPE_CUSTOM_MODE = BKE_undosys_type_append(ed::ED_custom_mode_undosys_type);
+
+  BKE_undosys_type_append(ed::authoring_undosys_type);
 
   /* Keep global undo last (as a fallback). */
   BKE_UNDOSYS_TYPE_MEMFILE = BKE_undosys_type_append(ED_memfile_undosys_type);
