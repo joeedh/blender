@@ -752,6 +752,8 @@ struct wmTabletData {
   float2 tilt;
   /** Interpret mouse motion as absolute as typical for tablets. */
   char is_motion_absolute;
+  /** Pressure, tilt-X and tilt-Y validity bits, matching GHOST_TTabletInput. */
+  uint8_t input_presence = 0;
 };
 
 /**
@@ -794,6 +796,12 @@ struct wmTabletData {
  */
 struct wmEvent {
   wmEvent *next, *prev;
+
+  /** Event-owned monotonic seconds. Never copied into persistent eventstate. */
+  double input_time = 0.0;
+  bool has_input_time = false;
+  /** Distinguishes real/simulated input from redraw-generated mouse motion. */
+  bool is_input_sample = false;
 
   /** Event code itself (short, is also in key-map). */
   wmEventType type;

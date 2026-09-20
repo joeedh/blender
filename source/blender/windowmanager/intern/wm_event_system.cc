@@ -4484,6 +4484,9 @@ void wm_event_do_handlers(bContext *C)
     /* Only add mouse-move when the event queue was read entirely. */
     if (win.addmousemove && win.runtime->eventstate) {
       wmEvent tevent = *(win.runtime->eventstate);
+      tevent.input_time = 0.0;
+      tevent.has_input_time = false;
+      tevent.is_input_sample = false;
       // printf("adding MOUSEMOVE %d %d\n", tevent.xy[0], tevent.xy[1]);
       tevent.type = MOUSEMOVE;
       tevent.val = KM_NOTHING;
@@ -5750,6 +5753,7 @@ void wm_tablet_data_from_ghost(const GHOST_TabletData *tablet_data, wmTabletData
 {
   if ((tablet_data != nullptr) && tablet_data->Active != GHOST_kTabletModeNone) {
     wmtab->active = int(tablet_data->Active);
+    wmtab->input_presence = tablet_data->InputPresence;
     wmtab->pressure = wm_pressure_curve(tablet_data->Pressure);
     wmtab->tilt = float2(tablet_data->Xtilt, tablet_data->Ytilt);
     /* We could have a preference to support relative tablet motion (we can't detect that). */
@@ -5865,6 +5869,14 @@ static void wm_event_prev_click_set(uint64_t event_time_ms,
   *r_event_state_prev_press_time_ms = event_time_ms;
 }
 
+void WM_event_retire_mousemove(wmEvent *event)
+{
+  if (event && event->type == MOUSEMOVE) {
+    event->type = INBETWEEN_MOUSEMOVE;
+    event->flag = eWM_EventFlag(0);
+  }
+}
+
 static wmEvent *wm_event_add_mousemove(wmWindow *win, const wmEvent *event)
 {
   wmEvent *event_last = static_cast<wmEvent *>(win->runtime->event_queue.last);
@@ -5872,10 +5884,7 @@ static wmEvent *wm_event_add_mousemove(wmWindow *win, const wmEvent *event)
   /* Some painting operators want accurate mouse events, they can
    * handle in between mouse move moves, others can happily ignore
    * them for better performance. */
-  if (event_last && event_last->type == MOUSEMOVE) {
-    event_last->type = INBETWEEN_MOUSEMOVE;
-    event_last->flag = eWM_EventFlag(0);
-  }
+  WM_event_retire_mousemove(event_last);
 
   wmEvent *event_new = wm_event_add_intern(win, event);
   if (event_last == nullptr) {
@@ -5907,6 +5916,9 @@ static wmEvent *wm_event_add_mousemove_to_head(wmWindow *win)
     memset(&tevent, 0x0, sizeof(tevent));
   }
 
+  tevent.input_time = 0.0;
+  tevent.has_input_time = false;
+  tevent.is_input_sample = false;
   tevent.type = MOUSEMOVE;
   tevent.val = KM_NOTHING;
   copy_v2_v2_int(tevent.prev_xy, tevent.xy);
@@ -6074,6 +6086,9 @@ void wm_event_add_ghostevent(wmWindowManager *wm,
 
   /* Initialize and copy state (only mouse x y and modifiers). */
   event = *event_state;
+  event.input_time = 0.0;
+  event.has_input_time = false;
+  event.is_input_sample = false;
   event.flag = eWM_EventFlag(0);
 
   /**
@@ -6130,6 +6145,9 @@ void wm_event_add_ghostevent(wmWindowManager *wm,
 
       wm_stereo3d_mouse_offset_apply(win, event.xy);
       wm_tablet_data_from_ghost(&cd->tablet, &event.tablet);
+      event.input_time = cd->time_is_input ? double(event_time_ms) / 1000.0 : 0.0;
+      event.has_input_time = cd->time_is_input;
+      event.is_input_sample = cd->is_input_sample;
 
       event.type = MOUSEMOVE;
       event.val = KM_NOTHING;
@@ -6145,6 +6163,10 @@ void wm_event_add_ghostevent(wmWindowManager *wm,
       wmWindow *win_other = wm_event_cursor_other_windows(wm, win, &event);
       if (win_other) {
         wmEvent event_other = *win_other->runtime->eventstate;
+        event_other.input_time = event.input_time;
+        event_other.has_input_time = event.has_input_time;
+        event_other.is_input_sample = event.is_input_sample;
+        event_other.tablet = event.tablet;
 
         /* Use the modifier state of this window. */
         event_other.modifier = event.modifier;
@@ -6234,6 +6256,9 @@ void wm_event_add_ghostevent(wmWindowManager *wm,
 
       /* Get tablet data. */
       wm_tablet_data_from_ghost(&bd->tablet, &event.tablet);
+      event.input_time = bd->time_is_input ? double(event_time_ms) / 1000.0 : 0.0;
+      event.has_input_time = bd->time_is_input;
+      event.is_input_sample = bd->is_input_sample;
 
       wm_eventemulation(&event, false);
       wm_event_state_update_and_click_set(&event,
@@ -6246,6 +6271,10 @@ void wm_event_add_ghostevent(wmWindowManager *wm,
       wmWindow *win_other = wm_event_cursor_other_windows(wm, win, &event);
       if (win_other) {
         wmEvent event_other = *win_other->runtime->eventstate;
+        event_other.input_time = event.input_time;
+        event_other.has_input_time = event.has_input_time;
+        event_other.is_input_sample = event.is_input_sample;
+        event_other.tablet = event.tablet;
 
         /* Use the modifier state of this window. */
         event_other.modifier = event.modifier;

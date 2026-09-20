@@ -804,6 +804,34 @@ static bool rna_Event_is_consecutive_get(PointerRNA *ptr)
   return (event->flag & WM_EVENT_IS_CONSECUTIVE) != 0;
 }
 
+static bool rna_Event_has_time_get(PointerRNA *ptr)
+{
+  return static_cast<const wmEvent *>(ptr->data)->has_input_time;
+}
+
+static bool rna_Event_is_input_sample_get(PointerRNA *ptr)
+{
+  return static_cast<const wmEvent *>(ptr->data)->is_input_sample;
+}
+
+static bool rna_Event_has_pressure_get(PointerRNA *ptr)
+{
+  const wmEvent *event = static_cast<const wmEvent *>(ptr->data);
+  return event->tablet.active == EVT_TABLET_NONE || (event->tablet.input_presence & 1) != 0;
+}
+
+static bool rna_Event_has_tilt_x_get(PointerRNA *ptr)
+{
+  const wmEvent *event = static_cast<const wmEvent *>(ptr->data);
+  return (event->tablet.input_presence & 2) != 0;
+}
+
+static bool rna_Event_has_tilt_y_get(PointerRNA *ptr)
+{
+  const wmEvent *event = static_cast<const wmEvent *>(ptr->data);
+  return (event->tablet.input_presence & 4) != 0;
+}
+
 static float rna_Event_pressure_get(PointerRNA *ptr)
 {
   const wmEvent *event = static_cast<wmEvent *>(ptr->data);
@@ -2608,6 +2636,31 @@ static void rna_def_event(BlenderRNA *brna)
   RNA_def_property_ui_text(prop,
                            "Mouse Previous Y Press Position",
                            "The window relative vertical location of the last press event");
+
+  prop = RNA_def_property(srna, "has_time", PROP_BOOLEAN, PROP_NONE);
+  RNA_def_property_clear_flag(prop, PROP_EDITABLE);
+  RNA_def_property_boolean_funcs(prop, "rna_Event_has_time_get", nullptr);
+  RNA_def_property_ui_text(prop, "Has Acquisition Time", "Input availability for this event");
+
+  prop = RNA_def_property(srna, "is_input_sample", PROP_BOOLEAN, PROP_NONE);
+  RNA_def_property_clear_flag(prop, PROP_EDITABLE);
+  RNA_def_property_boolean_funcs(prop, "rna_Event_is_input_sample_get", nullptr);
+  RNA_def_property_ui_text(prop, "Is Input Sample", "Input availability for this event");
+
+  prop = RNA_def_property(srna, "has_pressure", PROP_BOOLEAN, PROP_NONE);
+  RNA_def_property_clear_flag(prop, PROP_EDITABLE);
+  RNA_def_property_boolean_funcs(prop, "rna_Event_has_pressure_get", nullptr);
+  RNA_def_property_ui_text(prop, "Has Pressure", "Input availability for this event");
+
+  prop = RNA_def_property(srna, "has_tilt_x", PROP_BOOLEAN, PROP_NONE);
+  RNA_def_property_clear_flag(prop, PROP_EDITABLE);
+  RNA_def_property_boolean_funcs(prop, "rna_Event_has_tilt_x_get", nullptr);
+  RNA_def_property_ui_text(prop, "Has Tilt X", "Input availability for this event");
+
+  prop = RNA_def_property(srna, "has_tilt_y", PROP_BOOLEAN, PROP_NONE);
+  RNA_def_property_clear_flag(prop, PROP_EDITABLE);
+  RNA_def_property_boolean_funcs(prop, "rna_Event_has_tilt_y_get", nullptr);
+  RNA_def_property_ui_text(prop, "Has Tilt Y", "Input availability for this event");
 
   prop = RNA_def_property(srna, "pressure", PROP_FLOAT, PROP_FACTOR);
   RNA_def_property_float_default(prop, 1.0f);

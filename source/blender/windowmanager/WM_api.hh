@@ -2233,6 +2233,8 @@ void WM_event_tablet_data_default_set(wmTabletData *tablet_data);
  * For testing only, see #G_FLAG_EVENT_SIMULATE.
  */
 wmEvent *WM_event_add_simulate(wmWindow *win, const wmEvent *event_to_add);
+/** Retype a preceding queued mouse move while preserving its input sample. */
+void WM_event_retire_mousemove(wmEvent *event);
 
 const char *WM_window_cursor_keymap_status_get(const wmWindow *win,
                                                int button_index,

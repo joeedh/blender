@@ -17,5 +17,7 @@ extern PyMethodDef BPY_rna_windowmanager_draw_cursor_remove_method_def;
 extern PyGetSetDef BPY_rna_windowmanager_clipboard_getset_def;
 
 extern PyMethodDef BPY_rna_window_screenshot_method_def;
+extern PyMethodDef BPY_rna_window_event_simulate_input_method_def;
+extern PyGetSetDef BPY_rna_event_time_getset_def;
 
 }  // namespace blender

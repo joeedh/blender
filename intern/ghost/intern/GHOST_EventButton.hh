@@ -29,8 +29,11 @@ class GHOST_EventButton : public GHOST_Event {
                     GHOST_TEventType type,
                     GHOST_IWindow *window,
                     GHOST_TButton button,
-                    const GHOST_TabletData &tablet)
-      : GHOST_Event(time, type, window), button_event_data_({button, tablet})
+                    const GHOST_TabletData &tablet,
+                    bool time_is_input = false,
+                    bool is_input_sample = true)
+      : GHOST_Event(time, type, window),
+        button_event_data_({button, tablet, time_is_input, is_input_sample})
   {
     data_ = &button_event_data_;
   }

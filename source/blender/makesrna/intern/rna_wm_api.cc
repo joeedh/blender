@@ -796,6 +796,9 @@ static wmEvent *rna_Window_event_add_simulate(wmWindow *win,
   }
 
   wmEvent e = *win->runtime->eventstate;
+  e.input_time = 0.0;
+  e.has_input_time = false;
+  e.is_input_sample = ISMOUSE_MOTION(type) || ISMOUSE_BUTTON(type);
   e.type = wmEventType(type);
   e.val = value;
   e.flag = eWM_EventFlag(0);

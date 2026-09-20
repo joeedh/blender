@@ -221,11 +221,19 @@ enum GHOST_TTabletAPI {
   GHOST_kTabletWintab,
 };
 
+enum GHOST_TTabletInput : uint8_t {
+  GHOST_kTabletPressure = 1 << 0,
+  GHOST_kTabletTiltX = 1 << 1,
+  GHOST_kTabletTiltY = 1 << 2,
+};
+
 struct GHOST_TabletData {
   GHOST_TTabletMode Active; /* 0=None, 1=Stylus, 2=Eraser */
   float Pressure;           /* range 0.0 (not touching) to 1.0 (full pressure) */
   float Xtilt;              /* range -1.0 (left) to +1.0 (right) */
   float Ytilt;              /* range -1.0 (away from user) to +1.0 (toward user) */
+  /** Channels whose current values the device producer has established. */
+  uint8_t InputPresence = 0;
 };
 
 static const GHOST_TabletData GHOST_TABLET_DATA_NONE = {
@@ -642,6 +650,9 @@ struct GHOST_TEventCursorData {
   int32_t y;
   /** Associated tablet data. */
   GHOST_TabletData tablet;
+  /** True only for an audited acquisition timestamp, not dispatch/warp time. */
+  bool time_is_input = false;
+  bool is_input_sample = true;
 };
 
 struct GHOST_TEventButtonData {
@@ -649,6 +660,9 @@ struct GHOST_TEventButtonData {
   GHOST_TButton button;
   /** Associated tablet data. */
   GHOST_TabletData tablet;
+  /** True only for an audited acquisition timestamp, not dispatch/warp time. */
+  bool time_is_input = false;
+  bool is_input_sample = true;
 };
 
 enum GHOST_TEventWheelAxis {

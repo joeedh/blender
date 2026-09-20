@@ -205,7 +205,10 @@ static bool idprop_ui_data_update_int_default(IDProperty *idprop,
 /**
  * \return False when parsing fails, in which case caller should return nullptr.
  */
-static bool idprop_ui_data_update_int(IDProperty *idprop, PyObject *args, PyObject *kwargs)
+static bool idprop_ui_data_update_int(IDProperty *idprop,
+                                      PyObject *args,
+                                      PyObject *kwargs,
+                                      bool preserve_enum = false)
 {
   const char *rna_subtype = nullptr;
   const char *description = nullptr;
@@ -335,7 +338,7 @@ static bool idprop_ui_data_update_int(IDProperty *idprop, PyObject *args, PyObje
       return false;
     }
   }
-  else {
+  else if (!preserve_enum) {
     ui_data.enum_items = nullptr;
     ui_data.enum_items_num = 0;
   }
@@ -1047,6 +1050,44 @@ static PyObject *BPy_IDPropertyUIManager_update_from(BPy_IDPropertyUIManager *se
 #    pragma GCC diagnostic ignored "-Wcast-function-type"
 #  endif
 #endif
+
+PyObject *BPy_IDPropertyUIData_update(IDProperty *property, PyObject *kwargs)
+{
+  BPy_IDPropertyUIManager manager{};
+  manager.property = property;
+  PyObject *args = PyTuple_New(0);
+  if (args == nullptr) {
+    return nullptr;
+  }
+  PyObject *result;
+  if (IDP_ui_data_type(property) == IDP_UI_DATA_TYPE_INT) {
+    IDP_ui_data_ensure(property);
+    result = idprop_ui_data_update_int(property, args, kwargs, true) ? Py_NewRef(Py_None) :
+                                                                       nullptr;
+  }
+  else {
+    result = BPy_IDPropertyUIManager_update(&manager, args, kwargs);
+  }
+  Py_DECREF(args);
+  return result;
+}
+
+PyObject *BPy_IDPropertyUIData_as_dict(IDProperty *property)
+{
+  if (property->ui_data == nullptr) {
+    Py_RETURN_NONE;
+  }
+  const char *identifier = nullptr;
+  if (!RNA_enum_identifier(
+          rna_enum_property_subtype_items, property->ui_data->rna_subtype, &identifier))
+  {
+    PyErr_SetString(PyExc_ValueError, "Invalid existing UI subtype; data preserved");
+    return nullptr;
+  }
+  BPy_IDPropertyUIManager manager{};
+  manager.property = property;
+  return BPy_IDIDPropertyUIManager_as_dict(&manager);
+}
 
 static PyMethodDef BPy_IDPropertyUIManager_methods[] = {
     {"update",

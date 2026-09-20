@@ -29,8 +29,11 @@ class GHOST_EventCursor : public GHOST_Event {
                     GHOST_IWindow *window,
                     int32_t x,
                     int32_t y,
-                    const GHOST_TabletData &tablet)
-      : GHOST_Event(msec, type, window), cursor_event_data_({x, y, tablet})
+                    const GHOST_TabletData &tablet,
+                    bool time_is_input = false,
+                    bool is_input_sample = true)
+      : GHOST_Event(msec, type, window),
+        cursor_event_data_({x, y, tablet, time_is_input, is_input_sample})
   {
     data_ = &cursor_event_data_;
   }

@@ -894,7 +894,7 @@ GHOST_TSuccess GHOST_SystemCocoa::setCursorPosition(int32_t x, int32_t y)
 
   /* Force mouse move event (not pushed by Cocoa). */
   pushEvent(std::make_unique<GHOST_EventCursor>(
-      getMilliSeconds(), GHOST_kEventCursorMove, window, x, y, window->GetCocoaTabletData()));
+      getMilliSeconds(), GHOST_kEventCursorMove, window, x, y, window->GetCocoaTabletData(), false, false));
   outside_loop_event_processed_ = true;
 
   return GHOST_kSuccess;

@@ -11309,7 +11309,7 @@ bool GHOST_SystemWayland::window_cursor_grab_set(const GHOST_TGrabCursorMode mod
             ghost_wl_surface_user_data(wl_surface),
             wl_fixed_to_int(gwl_window_scale_wl_fixed_to(scale_params, xy_motion[0])),
             wl_fixed_to_int(gwl_window_scale_wl_fixed_to(scale_params, xy_motion[1])),
-            GHOST_TABLET_DATA_NONE));
+            GHOST_TABLET_DATA_NONE, false, false));
       }
 
       if (surface_needs_commit) {

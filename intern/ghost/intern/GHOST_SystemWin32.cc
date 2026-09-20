@@ -229,6 +229,14 @@ uint64_t GHOST_SystemWin32::getMilliSeconds() const
  * This should be used instead of #getMilliSeconds when you need the time a message was delivered
  * versus collected, so for all event creation that are in response to receiving a Windows message.
  */
+static uint64_t inputTickTime(GHOST_SystemWin32 *system, uint32_t tick)
+{
+  /* Input packets are at most one 32-bit tick period behind the current clock. */
+  const uint32_t age = uint32_t(GetTickCount()) - tick;
+  const uint64_t now = system->getMilliSeconds();
+  return now >= age ? now - age : 0;
+}
+
 static uint64_t getMessageTime(GHOST_SystemWin32 *system)
 {
   /* Get difference between last message time and now. */
@@ -932,7 +940,7 @@ std::unique_ptr<GHOST_EventButton> GHOST_SystemWin32::processButtonEvent(GHOST_T
     int msgPosX = GET_X_LPARAM(msgPos);
     int msgPosY = GET_Y_LPARAM(msgPos);
     system->pushEvent(std::make_unique<GHOST_EventCursor>(
-        event_ms, GHOST_kEventCursorMove, window, msgPosX, msgPosY, td));
+        event_ms, GHOST_kEventCursorMove, window, msgPosX, msgPosY, td, true));
 
     if (type == GHOST_kEventButtonDown) {
       WINTAB_PRINTF("HWND %p OS button down\n", window->getHWND());
@@ -943,7 +951,7 @@ std::unique_ptr<GHOST_EventButton> GHOST_SystemWin32::processButtonEvent(GHOST_T
   }
 
   window->updateMouseCapture(type == GHOST_kEventButtonDown ? MousePressed : MouseReleased);
-  return std::make_unique<GHOST_EventButton>(event_ms, type, window, mask, td);
+  return std::make_unique<GHOST_EventButton>(event_ms, type, window, mask, td, true);
 }
 
 void GHOST_SystemWin32::processWintabEvent(GHOST_WindowWin32 *window)
@@ -969,6 +977,7 @@ void GHOST_SystemWin32::processWintabEvent(GHOST_WindowWin32 *window)
   mouseMoveHandled = useWintabPos = wt->trustCoordinates();
 
   for (GHOST_WintabInfoWin32 &info : wintabInfo) {
+    info.time = inputTickTime(system, uint32_t(info.time));
     switch (info.type) {
       case GHOST_kEventCursorMove: {
         if (!useWintabPos) {
@@ -977,7 +986,7 @@ void GHOST_SystemWin32::processWintabEvent(GHOST_WindowWin32 *window)
 
         wt->mapWintabToSysCoordinates(info.x, info.y, info.x, info.y);
         system->pushEvent(std::make_unique<GHOST_EventCursor>(
-            info.time, GHOST_kEventCursorMove, window, info.x, info.y, info.tabletData));
+            info.time, GHOST_kEventCursorMove, window, info.x, info.y, info.tabletData, true));
 
         break;
       }
@@ -1023,11 +1032,11 @@ void GHOST_SystemWin32::processWintabEvent(GHOST_WindowWin32 *window)
            * transitioning from unsynchronized Win32 to Wintab cursor control. */
           wt->mapWintabToSysCoordinates(info.x, info.y, info.x, info.y);
           system->pushEvent(std::make_unique<GHOST_EventCursor>(
-              info.time, GHOST_kEventCursorMove, window, info.x, info.y, info.tabletData));
+              info.time, GHOST_kEventCursorMove, window, info.x, info.y, info.tabletData, true));
 
           window->updateMouseCapture(MousePressed);
           system->pushEvent(std::make_unique<GHOST_EventButton>(
-              info.time, info.type, window, info.button, info.tabletData));
+              info.time, info.type, window, info.button, info.tabletData, true));
 
           mouseMoveHandled = true;
         }
@@ -1069,7 +1078,7 @@ void GHOST_SystemWin32::processWintabEvent(GHOST_WindowWin32 *window)
           WINTAB_PRINTF(" ... associated to system button\n");
           window->updateMouseCapture(MouseReleased);
           system->pushEvent(std::make_unique<GHOST_EventButton>(
-              info.time, info.type, window, info.button, info.tabletData));
+              info.time, info.type, window, info.button, info.tabletData, true));
         }
         else {
           WINTAB_PRINTF(" ... but no system button\n");
@@ -1089,7 +1098,7 @@ void GHOST_SystemWin32::processWintabEvent(GHOST_WindowWin32 *window)
     GHOST_TabletData td = wt->getLastTabletData();
 
     system->pushEvent(std::make_unique<GHOST_EventCursor>(
-        getMessageTime(system), GHOST_kEventCursorMove, window, x, y, td));
+        getMessageTime(system), GHOST_kEventCursorMove, window, x, y, td, true));
   }
 }
 
@@ -1119,7 +1128,8 @@ void GHOST_SystemWin32::processPointerEvent(
                                                               window,
                                                               pointerInfo[i].pixelLocation.x,
                                                               pointerInfo[i].pixelLocation.y,
-                                                              pointerInfo[i].tabletData));
+                                                              pointerInfo[i].tabletData,
+                                                              true));
       }
 
       /* Leave event unhandled so that system cursor is moved. */
@@ -1133,12 +1143,14 @@ void GHOST_SystemWin32::processPointerEvent(
                                                             window,
                                                             pointerInfo[0].pixelLocation.x,
                                                             pointerInfo[0].pixelLocation.y,
-                                                            pointerInfo[0].tabletData));
+                                                            pointerInfo[0].tabletData,
+                                                            true));
       system->pushEvent(std::make_unique<GHOST_EventButton>(pointerInfo[0].time,
                                                             GHOST_kEventButtonDown,
                                                             window,
                                                             pointerInfo[0].buttonMask,
-                                                            pointerInfo[0].tabletData));
+                                                            pointerInfo[0].tabletData,
+                                                            true));
       window->updateMouseCapture(MousePressed);
 
       /* Mark event handled so that mouse button events are not generated. */
@@ -1151,7 +1163,8 @@ void GHOST_SystemWin32::processPointerEvent(
                                                             GHOST_kEventButtonUp,
                                                             window,
                                                             pointerInfo[0].buttonMask,
-                                                            pointerInfo[0].tabletData));
+                                                            pointerInfo[0].tabletData,
+                                                            true));
       window->updateMouseCapture(MouseReleased);
 
       /* Mark event handled so that mouse button events are not generated. */
@@ -1248,7 +1261,8 @@ std::unique_ptr<GHOST_EventCursor> GHOST_SystemWin32::processCursorEvent(
                                              window,
                                              x_screen,
                                              y_screen,
-                                             GHOST_TABLET_DATA_NONE);
+                                             GHOST_TABLET_DATA_NONE,
+                                             true);
 }
 
 void GHOST_SystemWin32::processWheelEventVertical(GHOST_WindowWin32 *window,
