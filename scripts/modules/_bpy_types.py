@@ -1605,6 +1605,10 @@ class GeometryNode(NodeInternal):
         return ntree.bl_idname == 'GeometryNodeTree'
 
 
+class ObjectModeType(_StructRNA, metaclass=_RNAMeta):
+    __slots__ = ()
+
+
 class RenderEngine(_StructRNA, metaclass=_RNAMeta):
     __slots__ = ()
 
