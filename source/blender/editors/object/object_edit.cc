@@ -2025,10 +2025,11 @@ static const EnumPropertyItem *object_mode_set_itemf(bContext *C,
   const Object *ob = CTX_data_active_object(C);
   if (ob) {
     while (input->identifier) {
-      /* The generic 'CUSTOM' item passes when the object's previous custom
-       * mode is registered (re-enter affordance); the registered modes get
-       * their own items below. */
-      if (mode_compat_test(ob, eObjectMode(input->value))) {
+      /* The generic 'CUSTOM' item is skipped: it only passes #mode_compat_test
+       * when the object's previous custom mode is registered and polls, and
+       * that mode then gets an item of its own below -- listing both put a
+       * bare "Custom" next to the mode's real label in the mode menu/pie. */
+      if (input->value != OB_MODE_CUSTOM && mode_compat_test(ob, eObjectMode(input->value))) {
         RNA_enum_item_add(&item, &totitem, input);
       }
       input++;
@@ -2079,8 +2080,8 @@ static wmOperatorStatus object_mode_set_exec(bContext *C, wmOperator *op)
 
   if (mode & OB_MODE_CUSTOM) {
     /* Decode the per-registered-mode items from #object_mode_set_itemf: the
-     * 1-based registry index rides the high bits (0 = the plain 'CUSTOM'
-     * item, which re-enters the object's previous custom mode). Parked for
+     * 1-based registry index rides the high bits (0 = the bare #OB_MODE_CUSTOM
+     * value, which re-enters the object's previous custom mode). Parked for
      * #OBJECT_OT_custom_mode_toggle since the mode bits can't carry it. */
     const int encoded_index = int(mode) >> 16;
     if (encoded_index > 0) {

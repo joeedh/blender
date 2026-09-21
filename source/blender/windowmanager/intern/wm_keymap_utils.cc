@@ -10,6 +10,7 @@
 
 #include <cstring>
 
+#include "DNA_object_types.h"
 #include "DNA_space_types.h"
 #include "DNA_windowmanager_types.h"
 
@@ -17,6 +18,7 @@
 #include "BLI_utildefines.hh"
 
 #include "BKE_context.hh"
+#include "BKE_object_modes.hh"
 
 #include "RNA_access.hh"
 
@@ -177,6 +179,16 @@ wmKeyMap *WM_keymap_guess_from_context(const bContext *C)
       case CTX_MODE_VERTEX_GREASE_PENCIL:
         km_id = "Grease Pencil Vertex Mode";
         break;
+      case CTX_MODE_CUSTOM: {
+        /* An addon-registered mode owns its keymap (see
+         * #view3d_custom_mode_keymap_fn); a type without one guesses nothing. */
+        const Object *ob = CTX_data_active_object(C);
+        const ObjectModeType *mt = ob ? BKE_object_mode_type_find(ob->custom_mode_id) : nullptr;
+        if (mt != nullptr && mt->keymap[0] != '\0') {
+          km_id = mt->keymap;
+        }
+        break;
+      }
     }
   }
   else if (sl->spacetype == SPACE_IMAGE) {
@@ -214,6 +226,12 @@ wmKeyMap *WM_keymap_guess_from_context(const bContext *C)
     }
   }
   else {
+    return nullptr;
+  }
+
+  /* A mode with no keymap of its own (a custom mode registered without one)
+   * has nothing to guess; #WM_keymap_find_all cannot take a null name. */
+  if (km_id == nullptr) {
     return nullptr;
   }
 
